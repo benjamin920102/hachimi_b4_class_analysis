@@ -1,0 +1,768 @@
+{
+  "registrar": "skidonion.vLZkx.___.___(ILjava/lang/Class;)V",
+  "classes": [
+    {
+      "class": "skidonion.vLZkx.I1I",
+      "registrationId": 84,
+      "registeredClass": "skidonion.vLZkx.I1I",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["l1I(Lskidonion/vLZkx/Il1;)V", "11ll()Z", "1Il1()Ljava/lang/String;", "hashCode()I", "equals(Ljava/lang/Object;)Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000av‎",
+      "registrationId": 52,
+      "registeredClass": "pw.hachimi.client.\u0000av‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["dl‎(Lpw/hachimi/client/\u0000jx‎;)V", "dn‎(J)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.l1I",
+      "registrationId": 91,
+      "registeredClass": "skidonion.vLZkx.l1I",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["I()Lskidonion/vLZkx/l1I;", "l(I)Lskidonion/vLZkx/l1I;", "11()Lskidonion/vLZkx/l1I;", "1(Ljava/io/Writer;)Lskidonion/vLZkx/Il1;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000cu‎",
+      "registrationId": 18,
+      "registeredClass": "pw.hachimi.client.\u0000cu‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["ld‎(Lpw/hachimi/client/\u0000mu‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000cm‎",
+      "registrationId": 64,
+      "registeredClass": "pw.hachimi.client.\u0000cm‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["ku‎(Lpw/hachimi/client/\u0000pH‎;)V", "kv‎(Lpw/hachimi/client/\u0000pj‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.lII",
+      "registrationId": 73,
+      "registeredClass": "skidonion.vLZkx.lII",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(I)Lskidonion/vLZkx/11l;", "I(J)Lskidonion/vLZkx/11l;", "l(F)Lskidonion/vLZkx/11l;", "11(D)Lskidonion/vLZkx/11l;", "1I(Ljava/lang/String;)Lskidonion/vLZkx/11l;", "1l(Z)Lskidonion/vLZkx/11l;", "I1()Lskidonion/vLZkx/l11;", "II([I)Lskidonion/vLZkx/l11;", "Il([J)Lskidonion/vLZkx/l11;", "l1([F)Lskidonion/vLZkx/l11;", "lI([D)Lskidonion/vLZkx/l11;", "ll([Z)Lskidonion/vLZkx/l11;", "111([Ljava/lang/String;)Lskidonion/vLZkx/l11;", "11I()Lskidonion/vLZkx/II1;", "11l(Ljava/lang/String;)Lskidonion/vLZkx/11l;", "1I1(Ljava/io/Reader;)Lskidonion/vLZkx/11l;", "1II(Ljava/lang/String;)Ljava/lang/String;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000fx‎",
+      "registrationId": 48,
+      "registeredClass": "pw.hachimi.client.\u0000fx‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["yA‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000hR‎",
+      "registrationId": 58,
+      "registeredClass": "pw.hachimi.client.\u0000hR‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "Km‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Boolean;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "skidonion.vLZkx.l11",
+      "registrationId": 75,
+      "registeredClass": "skidonion.vLZkx.l11",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["IlIl(Ljava/io/Reader;)Lskidonion/vLZkx/l11;", "Ill1(Ljava/lang/String;)Lskidonion/vLZkx/l11;", "IllI(Lskidonion/vLZkx/l11;)Lskidonion/vLZkx/l11;", "Illl(I)Lskidonion/vLZkx/l11;", "l111(J)Lskidonion/vLZkx/l11;", "l11I(F)Lskidonion/vLZkx/l11;", "l11l(D)Lskidonion/vLZkx/l11;", "l1I1(Z)Lskidonion/vLZkx/l11;", "l1II(Ljava/lang/String;)Lskidonion/vLZkx/l11;", "l1Il(Lskidonion/vLZkx/11l;)Lskidonion/vLZkx/l11;", "l1l1(II)Lskidonion/vLZkx/l11;", "l1lI(IJ)Lskidonion/vLZkx/l11;", "l1ll(IF)Lskidonion/vLZkx/l11;", "lI11(ID)Lskidonion/vLZkx/l11;", "lI1I(IZ)Lskidonion/vLZkx/l11;", "lI1l(ILjava/lang/String;)Lskidonion/vLZkx/l11;", "lII1(ILskidonion/vLZkx/11l;)Lskidonion/vLZkx/l11;", "lIII(I)Lskidonion/vLZkx/l11;", "size()I", "isEmpty()Z", "lIIl(I)Lskidonion/vLZkx/11l;", "lIl1()Ljava/util/List;", "iterator()Ljava/util/Iterator;", "l1I(Lskidonion/vLZkx/Il1;)V", "11lI()Z", "1IIl()Lskidonion/vLZkx/l11;", "hashCode()I", "equals(Ljava/lang/Object;)Z"]
+    },
+    {
+      "class": "skidonion.vLZkx.lI1",
+      "registrationId": 103,
+      "registeredClass": "skidonion.vLZkx.lI1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1()Lskidonion/vLZkx/l11;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000fM‎",
+      "registrationId": 26,
+      "registeredClass": "pw.hachimi.client.\u0000fM‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Aq‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000pf‎",
+      "registrationId": 66,
+      "registeredClass": "pw.hachimi.client.\u0000pf‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoN‎(Ljava/lang/String;Ljava/lang/Class;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000dq‎",
+      "registrationId": 23,
+      "registeredClass": "pw.hachimi.client.\u0000dq‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["nq‎(Lpw/hachimi/client/\u0000pj‎;)V", "nr‎(Lpw/hachimi/client/\u0000eL‎;)V", "nt‎(Lnet/minecraft/class_1799;)Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000dk‎",
+      "registrationId": 37,
+      "registeredClass": "pw.hachimi.client.\u0000dk‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["mM‎(Lnet/minecraft/class_437;J)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1I",
+      "registrationId": 101,
+      "registeredClass": "skidonion.vLZkx.1I",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": []
+    },
+    {
+      "class": "skidonion.vLZkx.II1",
+      "registrationId": 82,
+      "registeredClass": "skidonion.vLZkx.II1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1l1l(Ljava/io/Reader;)Lskidonion/vLZkx/II1;", "1lI1(Ljava/lang/String;)Lskidonion/vLZkx/II1;", "1lII(Lskidonion/vLZkx/II1;)Lskidonion/vLZkx/II1;", "1lIl(Ljava/lang/String;I)Lskidonion/vLZkx/II1;", "1ll1(Ljava/lang/String;J)Lskidonion/vLZkx/II1;", "1llI(Ljava/lang/String;F)Lskidonion/vLZkx/II1;", "1lll(Ljava/lang/String;D)Lskidonion/vLZkx/II1;", "I111(Ljava/lang/String;Z)Lskidonion/vLZkx/II1;", "I11I(Ljava/lang/String;Ljava/lang/String;)Lskidonion/vLZkx/II1;", "I11l(Ljava/lang/String;Lskidonion/vLZkx/11l;)Lskidonion/vLZkx/II1;", "I1I1(Ljava/lang/String;I)Lskidonion/vLZkx/II1;", "I1II(Ljava/lang/String;J)Lskidonion/vLZkx/II1;", "I1Il(Ljava/lang/String;F)Lskidonion/vLZkx/II1;", "I1l1(Ljava/lang/String;D)Lskidonion/vLZkx/II1;", "I1lI(Ljava/lang/String;Z)Lskidonion/vLZkx/II1;", "I1ll(Ljava/lang/String;Ljava/lang/String;)Lskidonion/vLZkx/II1;", "II11(Ljava/lang/String;Lskidonion/vLZkx/11l;)Lskidonion/vLZkx/II1;", "II1I(Ljava/lang/String;)Lskidonion/vLZkx/II1;", "II1l(Ljava/lang/String;)Z", "III1(Lskidonion/vLZkx/II1;)Lskidonion/vLZkx/II1;", "IIII(Ljava/lang/String;)Lskidonion/vLZkx/11l;", "IIIl(Ljava/lang/String;I)I", "IIl1(Ljava/lang/String;J)J", "IIlI(Ljava/lang/String;F)F", "IIll(Ljava/lang/String;D)D", "Il11(Ljava/lang/String;Z)Z", "Il1I(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", "size()I", "isEmpty()Z", "Il1l()Ljava/util/List;", "iterator()Ljava/util/Iterator;", "l1I(Lskidonion/vLZkx/Il1;)V", "11l1()Z", "1III()Lskidonion/vLZkx/II1;", "hashCode()I", "equals(Ljava/lang/Object;)Z", "IlI1(Ljava/lang/String;)I", "readObject(Ljava/io/ObjectInputStream;)V", "IlII()V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000oP‎",
+      "registrationId": 24,
+      "registeredClass": "pw.hachimi.client.\u0000oP‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["alK‎(Lnet/minecraft/class_2338;IJ)Z", "alL‎(Lpw/hachimi/client/\u0000jI‎;)V", "alM‎(Lpw/hachimi/client/\u0000pj‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000gS‎",
+      "registrationId": 38,
+      "registeredClass": "pw.hachimi.client.\u0000gS‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000hT‎",
+      "registrationId": 27,
+      "registeredClass": "pw.hachimi.client.\u0000hT‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Ko‎(Lpw/hachimi/client/\u0000jI‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000lH‎",
+      "registrationId": 35,
+      "registeredClass": "pw.hachimi.client.\u0000lH‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["XI‎(J)V", "XJ‎(IIC[Lpw/hachimi/client/\u0000by‎;)V", "XK‎(J[Lpw/hachimi/client/\u0000mQ‎;)V", "XL‎(JLpw/hachimi/client/\u0000by‎;)V", "XM‎(Lpw/hachimi/client/\u0000by‎;J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000iz‎",
+      "registrationId": 54,
+      "registeredClass": "pw.hachimi.client.\u0000iz‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LY‎(Lpw/hachimi/client/\u0000jI‎;)V", "Ma‎(Lpw/hachimi/client/\u0000jx‎;)V", "Mb‎(Lpw/hachimi/client/\u0000pH‎;)V", "Mf‎(Lpw/hachimi/client/\u0000lM‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.III",
+      "registrationId": 99,
+      "registeredClass": "skidonion.vLZkx.III",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["mouseClicked(Ljava/awt/event/MouseEvent;)V", "mouseEntered(Ljava/awt/event/MouseEvent;)V", "mouseExited(Ljava/awt/event/MouseEvent;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qw‎",
+      "registrationId": 11,
+      "registeredClass": "pw.hachimi.client.\u0000qw‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["atK‎(J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000i‎",
+      "registrationId": 0,
+      "registeredClass": "pw.hachimi.client.\u0000i‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["B‎(Lnet/minecraft/class_1297;DZJ)Z", "C‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000lm‎",
+      "registrationId": 70,
+      "registeredClass": "pw.hachimi.client.\u0000lm‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["WQ‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000iZ‎",
+      "registrationId": 45,
+      "registeredClass": "pw.hachimi.client.\u0000iZ‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["NT‎()V", "NU‎()V"]
+    },
+    {
+      "class": "skidonion.vLZkx.11I",
+      "registrationId": 102,
+      "registeredClass": "skidonion.vLZkx.11I",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": []
+    },
+    {
+      "class": "skidonion.vLZkx.I",
+      "registrationId": 98,
+      "registeredClass": "skidonion.vLZkx.I",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["mouseClicked(Ljava/awt/event/MouseEvent;)V", "mouseEntered(Ljava/awt/event/MouseEvent;)V", "mouseExited(Ljava/awt/event/MouseEvent;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qt‎",
+      "registrationId": 59,
+      "registeredClass": "pw.hachimi.client.\u0000qt‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000of‎",
+      "registrationId": 63,
+      "registeredClass": "pw.hachimi.client.\u0000of‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aiN‎(Lpw/hachimi/client/\u0000jI‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000pG‎",
+      "registrationId": 3,
+      "registeredClass": "pw.hachimi.client.\u0000pG‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aqz‎(Lpw/hachimi/client/\u0000mY‎;)V", "aqB‎(JLnet/minecraft/class_243;Lnet/minecraft/class_243;)Lnet/minecraft/class_243;", "aqE‎(Lpw/hachimi/client/\u0000nz‎;)V", "aqF‎(Lpw/hachimi/client/\u0000pw‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.IIl",
+      "registrationId": 77,
+      "registeredClass": "skidonion.vLZkx.IIl",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["l1I(Lskidonion/vLZkx/Il1;)V", "toString()Ljava/lang/String;", "hashCode()I", "1II1()Z", "1I1I()Z", "1I1l()Z", "1I11()Z", "1IlI()Z", "equals(Ljava/lang/Object;)Z"]
+    },
+    {
+      "class": "skidonion.vLZkx.II",
+      "registrationId": 107,
+      "registeredClass": "skidonion.vLZkx.II",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1([B)Ljava/lang/String;", "I(Ljava/lang/String;)[B", "l([B)[B", "11([B)Ljava/lang/String;", "1I(Ljava/lang/String;)[B", "1l([B)[B"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000oY‎",
+      "registrationId": 65,
+      "registeredClass": "pw.hachimi.client.\u0000oY‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["anY‎(J)V", "anZ‎(J)V", "aoa‎(JS)V", "aob‎(J)V", "aoe‎(JLjava/lang/String;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000cc‎",
+      "registrationId": 19,
+      "registeredClass": "pw.hachimi.client.\u0000cc‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000gT‎",
+      "registrationId": 68,
+      "registeredClass": "pw.hachimi.client.\u0000gT‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Ed‎(Lpw/hachimi/client/\u0000jx‎;)V", "Ei‎(Lpw/hachimi/client/\u0000ps‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000lY‎",
+      "registrationId": 15,
+      "registeredClass": "pw.hachimi.client.\u0000lY‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["ZL‎(Lpw/hachimi/client/\u0000jx‎;)V", "ZN‎(IJ)V", "ZO‎(Lpw/hachimi/client/\u0000pH‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000ff‎",
+      "registrationId": 61,
+      "registeredClass": "pw.hachimi.client.\u0000ff‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["xq‎(BJ)V", "xr‎(J)V", "xs‎(J)V", "xt‎(IBI)V", "xu‎(J)Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000kp‎",
+      "registrationId": 69,
+      "registeredClass": "pw.hachimi.client.\u0000kp‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "TK‎(JLcom/google/gson/JsonObject;)Ljava/awt/Color;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000mR‎",
+      "registrationId": 46,
+      "registeredClass": "pw.hachimi.client.\u0000mR‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["adG‎(J[Lpw/hachimi/client/\u0000mZ‎;)V", "adH‎(Lpw/hachimi/client/\u0000mZ‎;J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000bL‎",
+      "registrationId": 32,
+      "registeredClass": "pw.hachimi.client.\u0000bL‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["im‎(Lnet/minecraft/class_243;J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qY‎",
+      "registrationId": 17,
+      "registeredClass": "pw.hachimi.client.\u0000qY‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["avD‎(Lpw/hachimi/client/\u0000iy‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000F‎",
+      "registrationId": 67,
+      "registeredClass": "pw.hachimi.client.\u0000F‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aU‎(JLcom/google/gson/JsonObject;)Lpw/hachimi/client/\u0000nH‎;", "LT‎(J)Lcom/google/gson/JsonObject;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000fU‎",
+      "registrationId": 20,
+      "registeredClass": "pw.hachimi.client.\u0000fU‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["AP‎(Lpw/hachimi/client/\u0000jx‎;)V", "AQ‎(IILnet/minecraft/class_6880;)Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000et‎",
+      "registrationId": 34,
+      "registeredClass": "pw.hachimi.client.\u0000et‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["qw‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000hp‎",
+      "registrationId": 41,
+      "registeredClass": "pw.hachimi.client.\u0000hp‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["FI‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1ll",
+      "registrationId": 93,
+      "registeredClass": "skidonion.vLZkx.1ll",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": []
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qe‎",
+      "registrationId": 13,
+      "registeredClass": "pw.hachimi.client.\u0000qe‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["asj‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.IlI",
+      "registrationId": 89,
+      "registeredClass": "skidonion.vLZkx.IlI",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": []
+    },
+    {
+      "class": "pw.hachimi.client.\u0000kZ‎",
+      "registrationId": 50,
+      "registeredClass": "pw.hachimi.client.\u0000kZ‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000oR‎",
+      "registrationId": 31,
+      "registeredClass": "pw.hachimi.client.\u0000oR‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["awh‎(J)V", "anc‎(JLnet/minecraft/class_2664;)Z", "and‎(Lnet/minecraft/class_2743;J)Z", "anf‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.l1l",
+      "registrationId": 72,
+      "registeredClass": "skidonion.vLZkx.l1l",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1lI()Lskidonion/vLZkx/l11;", "1ll()Lskidonion/vLZkx/II1;", "l()V", "1I(Z)V", "I1(Ljava/lang/String;)V", "Il(Ljava/lang/String;)V", "I11(Lskidonion/vLZkx/l11;)V", "I1I(Lskidonion/vLZkx/II1;)V", "I1l(Lskidonion/vLZkx/l11;)V", "II1(Lskidonion/vLZkx/II1;Ljava/lang/String;)V", "III()Lskidonion/vLZkx/11l;", "1l1(Ljava/lang/Object;Ljava/lang/String;)V", "11l(Ljava/lang/Object;)V", "11I()Ljava/lang/Object;", "111(Ljava/lang/Object;)V", "lI(Ljava/lang/Object;)V", "l1()Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000au‎",
+      "registrationId": 47,
+      "registeredClass": "pw.hachimi.client.\u0000au‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["dc‎(J)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1I1",
+      "registrationId": 80,
+      "registeredClass": "skidonion.vLZkx.1I1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(Ljava/lang/String;I)V", "I(I)V", "l(Ljava/lang/Object;)I", "11(Ljava/lang/Object;)I"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000jE‎",
+      "registrationId": 40,
+      "registeredClass": "pw.hachimi.client.\u0000jE‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["PY‎(Lpw/hachimi/client/\u0000cz‎;)V", "PZ‎(Lpw/hachimi/client/\u0000pH‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qV‎",
+      "registrationId": 56,
+      "registeredClass": "pw.hachimi.client.\u0000qV‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["avv‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000ab‎",
+      "registrationId": 4,
+      "registeredClass": "pw.hachimi.client.\u0000ab‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["ca‎(Lpw/hachimi/client/\u0000jx‎;)V", "cb‎(Lpw/hachimi/client/\u0000pj‎;)V", "cc‎(Lnet/minecraft/class_1297;J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000fT‎",
+      "registrationId": 42,
+      "registeredClass": "pw.hachimi.client.\u0000fT‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["AH‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1Il",
+      "registrationId": 106,
+      "registeredClass": "skidonion.vLZkx.1Il",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(II)I", "I([BI)I", "l(I[BI)V", "11([IIIII)V", "1I()V", "1l([B)[B", "I1(J)V", "II()J", "Il(J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000rl‎",
+      "registrationId": 36,
+      "registeredClass": "pw.hachimi.client.\u0000rl‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["awT‎(Lpw/hachimi/client/\u0000pH‎;)V", "awU‎(Lpw/hachimi/client/\u0000pj‎;)V", "awW‎(Lpw/hachimi/client/\u0000jI‎;)V", "awX‎(Lpw/hachimi/client/\u0000pj‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000kk‎",
+      "registrationId": 14,
+      "registeredClass": "pw.hachimi.client.\u0000kk‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Sr‎(Lpw/hachimi/client/\u0000jI‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qv‎",
+      "registrationId": 44,
+      "registeredClass": "pw.hachimi.client.\u0000qv‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.l1",
+      "registrationId": 100,
+      "registeredClass": "skidonion.vLZkx.l1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1I()V", "1l()I", "I1(Ljava/awt/event/ActionEvent;)V", "II()V", "Il(Ljava/awt/event/MouseEvent;)V", "l1(Ljava/awt/event/MouseEvent;)V", "lI(Ljava/awt/event/MouseEvent;)V", "ll(Ljava/awt/event/MouseEvent;)V", "111(Ljava/awt/event/MouseEvent;)V", "11I(Ljava/awt/event/MouseEvent;)V", "11l(Ljava/awt/event/MouseEvent;)V", "1I1(Ljava/awt/event/MouseEvent;)V", "1II(Ljava/awt/event/MouseEvent;)V", "1Il(Ljava/awt/event/KeyEvent;)V", "1l1()V", "1lI(Ljava/awt/event/ActionEvent;)V", "1ll(Ljava/lang/Runnable;)Ljava/lang/Thread;", "I11(Lskidonion/vLZkx/l1;Ljava/awt/event/KeyEvent;)V", "I1I(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "I1l(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "II1(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "III(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "IIl(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "Il1(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "IlI(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "Ill(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V", "l11(Lskidonion/vLZkx/l1;Ljava/awt/event/MouseEvent;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.11l",
+      "registrationId": 85,
+      "registeredClass": "skidonion.vLZkx.11l",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["llI(Ljava/io/Reader;)Lskidonion/vLZkx/11l;", "lll(Ljava/lang/String;)Lskidonion/vLZkx/11l;", "1111(I)Lskidonion/vLZkx/11l;", "111I(J)Lskidonion/vLZkx/11l;", "111l(F)Lskidonion/vLZkx/11l;", "11I1(D)Lskidonion/vLZkx/11l;", "11II(Ljava/lang/String;)Lskidonion/vLZkx/11l;", "11Il(Z)Lskidonion/vLZkx/11l;", "11l1()Z", "11lI()Z", "l1l()Z", "11ll()Z", "1I11()Z", "1I1I()Z", "1I1l()Z", "1II1()Z", "1III()Lskidonion/vLZkx/II1;", "1IIl()Lskidonion/vLZkx/l11;", "lI1()I", "lII()J", "lIl()F", "ll1()D", "1Il1()Ljava/lang/String;", "1IlI()Z", "1Ill(Ljava/io/Writer;)V", "1l11(Ljava/io/Writer;Lskidonion/vLZkx/1ll;)V", "toString()Ljava/lang/String;", "1l1I(Lskidonion/vLZkx/1ll;)Ljava/lang/String;", "equals(Ljava/lang/Object;)Z", "hashCode()I"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qQ‎",
+      "registrationId": 51,
+      "registeredClass": "pw.hachimi.client.\u0000qQ‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["main([Ljava/lang/String;)V", "avl‎(Ljava/lang/String;J)Ljava/lang/String;", "avm‎(ILjava/util/List;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000hx‎",
+      "registrationId": 57,
+      "registeredClass": "pw.hachimi.client.\u0000hx‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["GF‎(J)V", "GG‎(J)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.Ill",
+      "registrationId": 79,
+      "registeredClass": "skidonion.vLZkx.Ill",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["hasNext()Z", "I()Lskidonion/vLZkx/I11;", "remove()V", "next()Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qA‎",
+      "registrationId": 21,
+      "registeredClass": "pw.hachimi.client.\u0000qA‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["awg‎(II)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.lI",
+      "registrationId": 76,
+      "registeredClass": "skidonion.vLZkx.lI",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1()Lskidonion/vLZkx/Il;", "I()V", "l()V", "11()V", "1I(Z)V", "1l()V", "I1(Ljava/lang/String;)V", "II()V", "Il(Ljava/lang/String;)V", "l1()Ljava/lang/Object;", "lI(Ljava/lang/Object;)V", "ll(Ljava/lang/Object;)V", "111(Ljava/lang/Object;)V", "11I()Ljava/lang/Object;", "11l(Ljava/lang/Object;)V", "1I1(Ljava/lang/Object;)V", "1II(Ljava/lang/Object;Ljava/lang/String;)V", "1Il(Ljava/lang/Object;Ljava/lang/String;)V", "1l1(Ljava/lang/Object;Ljava/lang/String;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000cI‎",
+      "registrationId": 43,
+      "registeredClass": "pw.hachimi.client.\u0000cI‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000oZ‎",
+      "registrationId": 25,
+      "registeredClass": "pw.hachimi.client.\u0000oZ‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aot‎(CIC)V", "aou‎(IIS)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1l1",
+      "registrationId": 105,
+      "registeredClass": "skidonion.vLZkx.1l1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(Ljava/lang/String;)Ljava/lang/String;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000jp‎",
+      "registrationId": 62,
+      "registeredClass": "pw.hachimi.client.\u0000jp‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Ph‎(ZJ)V", "Pj‎(BILjava/lang/String;I)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.Il",
+      "registrationId": 87,
+      "registeredClass": "skidonion.vLZkx.Il",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["toString()Ljava/lang/String;", "hashCode()I", "equals(Ljava/lang/Object;)Z"]
+    },
+    {
+      "class": "skidonion.vLZkx.___",
+      "registrationId": null,
+      "registeredClass": null,
+      "registrationCaller": null,
+      "nativeMethods": ["___(ILjava/lang/Class;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1lI",
+      "registrationId": 104,
+      "registeredClass": "skidonion.vLZkx.1lI",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(Ljava/lang/Runnable;)Ljava/lang/Thread;", "I()V"]
+    },
+    {
+      "class": "skidonion.vLZkx.111",
+      "registrationId": 95,
+      "registeredClass": "skidonion.vLZkx.111",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1()I"]
+    },
+    {
+      "class": "skidonion.vLZkx.lIl",
+      "registrationId": 97,
+      "registeredClass": "skidonion.vLZkx.lIl",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["mouseClicked(Ljava/awt/event/MouseEvent;)V", "mouseEntered(Ljava/awt/event/MouseEvent;)V", "mouseExited(Ljava/awt/event/MouseEvent;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.Il1",
+      "registrationId": 86,
+      "registeredClass": "skidonion.vLZkx.Il1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Il(Ljava/lang/String;)V", "l1(Ljava/lang/String;)V", "lI(Ljava/lang/String;)V", "1()V", "I()V", "l()V", "11()V", "1I()V", "ll(Ljava/lang/String;)V", "1l()V", "I1()V", "111(Ljava/lang/String;)V", "11I(C)[C"]
+    },
+    {
+      "class": "skidonion.vLZkx.I1",
+      "registrationId": 92,
+      "registeredClass": "skidonion.vLZkx.I1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(Ljava/io/Writer;)Lskidonion/vLZkx/Il1;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000nH‎",
+      "registrationId": 5,
+      "registeredClass": "pw.hachimi.client.\u0000nH‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "agy‎(Lcom/google/gson/JsonObject;J)Lpw/hachimi/client/\u0000nH‎;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "skidonion.vLZkx.1II",
+      "registrationId": 94,
+      "registeredClass": "skidonion.vLZkx.1II",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["write(I)V", "write([CII)V", "write(Ljava/lang/String;II)V", "flush()V", "close()V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000mo‎",
+      "registrationId": 30,
+      "registeredClass": "pw.hachimi.client.\u0000mo‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "abu‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Number;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000bI‎",
+      "registrationId": 33,
+      "registeredClass": "pw.hachimi.client.\u0000bI‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["hM‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1",
+      "registrationId": 83,
+      "registeredClass": "skidonion.vLZkx.1",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1(Ljava/lang/String;)V", "I(Ljava/io/Reader;)V", "l(Ljava/io/Reader;I)V", "11()V", "1I()V", "1l()V", "I1()Ljava/lang/String;", "II()V", "Il()V", "l1()V", "lI(C)V", "ll()V", "111()Ljava/lang/String;", "11I()V", "11l()V", "1I1()Z", "1II()Z", "1Il(C)Z", "1l1()Z", "1lI()V", "1ll()V", "I11()V", "I1I()V", "I1l()Ljava/lang/String;", "II1()Lskidonion/vLZkx/Il;", "III(Ljava/lang/String;)Lskidonion/vLZkx/11;", "IIl(Ljava/lang/String;)Lskidonion/vLZkx/11;", "Il1()Z", "IlI()Z", "Ill()Z", "l11()Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000lf‎",
+      "registrationId": 53,
+      "registeredClass": "pw.hachimi.client.\u0000lf‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["WC‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000mG‎",
+      "registrationId": 8,
+      "registeredClass": "pw.hachimi.client.\u0000mG‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["acf‎(Lpw/hachimi/client/\u0000jI‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000cN‎",
+      "registrationId": 12,
+      "registeredClass": "pw.hachimi.client.\u0000cN‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000pO‎",
+      "registrationId": 6,
+      "registeredClass": "pw.hachimi.client.\u0000pO‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["arA‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.I1l",
+      "registrationId": 90,
+      "registeredClass": "skidonion.vLZkx.I1l",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1()V", "I()V", "l()V", "11()V", "1I()V", "1l()V", "I1()V", "II()Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000nu‎",
+      "registrationId": 55,
+      "registeredClass": "pw.hachimi.client.\u0000nu‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "afZ‎(JLcom/google/gson/JsonObject;)Ljava/util/List;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000jl‎",
+      "registrationId": 1,
+      "registeredClass": "pw.hachimi.client.\u0000jl‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["OI‎(JLpw/hachimi/client/\u0000qt‎;)Lpw/hachimi/client/\u0000qt‎;", "LT‎(J)Lcom/google/gson/JsonObject;", "OM‎(Lcom/google/gson/JsonObject;J)Lpw/hachimi/client/\u0000qt‎;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000kM‎",
+      "registrationId": 39,
+      "registeredClass": "pw.hachimi.client.\u0000kM‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Vz‎(J)Z", "VA‎(Lpw/hachimi/client/\u0000nr‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000km‎",
+      "registrationId": 9,
+      "registeredClass": "pw.hachimi.client.\u0000km‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["Tn‎(J)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000fc‎",
+      "registrationId": 7,
+      "registeredClass": "pw.hachimi.client.\u0000fc‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["wV‎(J)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.11",
+      "registrationId": 88,
+      "registeredClass": "skidonion.vLZkx.11",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1()Lskidonion/vLZkx/Il;", "I()I", "l()I", "11()I"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000he‎",
+      "registrationId": 10,
+      "registeredClass": "pw.hachimi.client.\u0000he‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["EZ‎(J)V", "Fg‎(Lnet/minecraft/class_2338;Lnet/minecraft/class_2350;JLnet/minecraft/class_1268;ZZ)V", "Fq‎(Lnet/minecraft/class_1297;IDZZSS)Z"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000ay‎",
+      "registrationId": 16,
+      "registeredClass": "pw.hachimi.client.\u0000ay‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["dN‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000dt‎",
+      "registrationId": 60,
+      "registeredClass": "pw.hachimi.client.\u0000dt‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "nC‎(JLcom/google/gson/JsonObject;)Ljava/lang/String;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000qU‎",
+      "registrationId": 22,
+      "registeredClass": "pw.hachimi.client.\u0000qU‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["avq‎(Lpw/hachimi/client/\u0000jx‎;)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.1l",
+      "registrationId": 96,
+      "registeredClass": "skidonion.vLZkx.1l",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["keyPressed(Ljava/awt/event/KeyEvent;)V"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000V‎",
+      "registrationId": 2,
+      "registeredClass": "pw.hachimi.client.\u0000V‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "bC‎(JLcom/google/gson/JsonObject;)Lpw/hachimi/client/\u0000V‎;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000dc‎",
+      "registrationId": 29,
+      "registeredClass": "pw.hachimi.client.\u0000dc‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "mj‎(Lcom/google/gson/JsonObject;J)Ljava/util/List;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000l‎",
+      "registrationId": 49,
+      "registeredClass": "pw.hachimi.client.\u0000l‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "am‎(Lcom/google/gson/JsonObject;J)Ljava/util/List;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    },
+    {
+      "class": "skidonion.vLZkx.I11",
+      "registrationId": 81,
+      "registeredClass": "skidonion.vLZkx.I11",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["1()Ljava/lang/String;", "I()Lskidonion/vLZkx/11l;", "hashCode()I", "equals(Ljava/lang/Object;)Z", "l(Lskidonion/vLZkx/I11;)Ljava/lang/String;", "11(Lskidonion/vLZkx/I11;)Lskidonion/vLZkx/11l;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000ft‎",
+      "registrationId": 28,
+      "registeredClass": "pw.hachimi.client.\u0000ft‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["aoS‎(CSI)V"]
+    },
+    {
+      "class": "skidonion.vLZkx.ll",
+      "registrationId": 78,
+      "registeredClass": "skidonion.vLZkx.ll",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["toString()Ljava/lang/String;", "l1I(Lskidonion/vLZkx/Il1;)V", "l1l()Z", "lI1()I", "lII()J", "lIl()F", "ll1()D", "hashCode()I", "equals(Ljava/lang/Object;)Z"]
+    },
+    {
+      "class": "skidonion.vLZkx.l",
+      "registrationId": 74,
+      "registeredClass": "skidonion.vLZkx.l",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["hasNext()Z", "1()Lskidonion/vLZkx/11l;", "remove()V", "next()Ljava/lang/Object;"]
+    },
+    {
+      "class": "pw.hachimi.client.\u0000dh‎",
+      "registrationId": 71,
+      "registeredClass": "pw.hachimi.client.\u0000dh‎",
+      "registrationCaller": "<clinit>()V",
+      "nativeMethods": ["LT‎(J)Lcom/google/gson/JsonObject;", "mw‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Enum;", "LU‎(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;"]
+    }
+  ]
+}

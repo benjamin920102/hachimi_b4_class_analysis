@@ -1,1208 +1,1275 @@
-# hachimi_b4_merged Class 全量静态分析
+# Hachimi B4 (`hachimi_b4_pw_1006.jar`) Java + Native 类结构分析
 
-本 README 由 `hachimi_b4_merged(1).jar` 与用户提供的 `shoreline-main (1).zip` 本地静态比对生成。分析重点是把原 JAR 中利用重复目录名/乱码名称隐藏的 class 全量恢复，并识别其与 Shoreline 的框架和 Module 对应关系。
+> 本文档基于 `hachimi_b4_pw_1006.jar`、`jpi-mappings_pw.json` 与 `native_mapping.json` 的联合静态分析生成。重点是恢复“普通解压器看不到的 class”、建立映射，并按继承关系/API 调用推断每个 class 的职责。由于大量字符串采用 DES + `invokedynamic` 动态解密，无法从纯静态常量中可靠得到所有原始模块显示名，因此本文对这部分使用“结构角色 + 行为域 + 置信度”，避免凭空命名。
 
-## 结论摘要
+## 1. 结论摘要
 
-- 原 JAR ZIP 条目：**1005**；按 `CAFEBABE` 文件头确认的 class：**1005**。
-- 唯一内部 class 名：**1005**；因此 1005 个条目全部是 class，并非普通目录。
-- 原 ZIP 大量条目表面名称相同且以 `/` 结尾，但内容实际是 class；本包使用 `class/NNNN__安全化类名.class` 保存，以确保 Windows/Linux 解压均不会漏掉乱码、控制字符或重复目录伪装条目。
-- 识别到 **149** 个直接 Module 子类；识别到 **170** 个直接 Event 子类。
-- 此 JAR 有明显的字符串/常量混淆：大量 class 含 `DES/CBC/PKCS5Padding`、invokedynamic/bootstrap 解密逻辑。因此“类名/模块名”不能只靠明文字符串恢复；README 对 Shoreline module 仅在存在独特 hook/API 证据时给较高置信度。
+- JAR ZIP 条目总数：**928**；其中解析到 **928 个有效 Java class**。
+- 正常以 `.class` 命名、可直接看到的 class：**107**。
+- 被伪装成重复目录项 `pw/hachimi/client/` 的隐藏 class：**821**。这些条目内部均以 `CAFEBABE` 开头，实际就是 class 文件。
+- 隐藏 class 的真实内部名大量使用 `NUL (U+0000)` + 短名 + `LRM (U+200E)`，例如 `pw/hachimi/client/\u0000ln\u200E`。Windows/Unix 文件名都不能直接包含 NUL，所以即便恢复真实内部名，也不适合按原名落盘。
+- `jpi-mappings_pw.json` 中的 `class_1 ... class_928` 与 JAR 中 928 个 class 可以 **一一对应**；因此最安全的导出文件名应使用 `class_N.class`，README 中同时保留真实内部名的转义形式。
+- 保护层明显包含：DES/CBC 字符串加密、`MutableCallSite`/`MethodHandle`/`invokedynamic`、控制流扁平化、合成桥接方法，以及 `skidonion/...` 运行时调用。
+- `NativeBridge` 还存在 Windows/JNA 本地层：会定位名为 PhantomShield 的已加载模块，验证特定构建，安装 512-byte key table，并通过 `VirtualProtect` 修改代码页后 `FlushInstructionCache`。
+- `native_mapping.json` 记录的统一 native registrar 为 `skidonion.vLZkx.___.___(ILjava/lang/Class;)V`；共列出 **109 个 native 相关类**，其中 **108 个带 Registration ID**，合计 **464 个 native 方法签名**。
+- 其中 `pw.hachimi.client.*` 有 **72 个**（**69 个**可直接映射到 `class_N`，**3 个**只出现在 native mapping），`skidonion.vLZkx.*` 有 **37 个**。
+- 大量 native 注册发生在各类 `<clinit>()V`，说明本地绑定属于类初始化流程的一部分；因此仅看 Java 方法体会漏掉一批真正业务逻辑。
 
-## 关键框架对应
+### 主要结构族
 
-| Hachimi 混淆类 | 推定 Shoreline 原型 | 依据 |
-|---|---|---|
-| `pw/hachimi/client/��nZ\u200E` | `Event` | 直接子类约 170 个；结构与 Shoreline 大量 Event 类高度一致 |
-| `pw/hachimi/client/��by\u200E` | `Module` | `��re` 的父类；持有 name/description/category 风格字段与模块元数据方法 |
-| `pw/hachimi/client/��re\u200E` | `ToggleModule` | 有 enable/hidden/config/event 相关逻辑，且 149 个功能类直接继承 |
-| `pw/hachimi/client/��mZ\u200E` | `Command` | 构造参数和方法直接引用 Brigadier `LiteralArgumentBuilder` / `CommandDispatcher` |
+| 基类 | mapping | 直接子类数 | 静态推断 |
+|---|---:|---:|---|
+| `pw/hachimi/client/\u0000re\u200E` | `class_874` | 146 | 模块系统核心基类 |
+| `pw/hachimi/client/\u0000nZ\u200E` | `class_919` | 149 | 事件系统核心基类 |
+| `pw/hachimi/client/\u0000mZ\u200E` | `class_883` | 38 | Brigadier 命令基类 |
+| `pw/hachimi/client/\u0000lQ\u200E` | `class_877` | 29 | 大型枚举基类/枚举常量专用匿名类宿主 |
+| `pw/hachimi/client/\u0000ot\u200E` | `class_806` | 12 | 模块二级基类 |
+| `pw/hachimi/client/\u0000kb\u200E` | `class_805` | 23 | 玩家筛选/目标选择模块二级基类 |
+| `pw/hachimi/client/\u0000aU\u200E` | `class_810` | 11 | DrawContext 渲染事件基类 |
+| `pw/hachimi/client/\u0000qt\u200E` | `class_908` | 9 | Setting/配置项基类 |
 
-## Shoreline Module 对应（149 个 Hachimi Module）
+## 2. 为什么“无法解压缩的文件名”其实是 class
 
-置信度说明：`高`=存在几乎唯一的 Shoreline hook/API 组合；`中高/中`=强结构特征但仍可能有 fork 改动；`低`=仅候选；`未确认`=不强行猜。
+JAR 中有 821 个 ZIP central-directory 条目都叫 `pw/hachimi/client/`，名字以 `/` 结尾，普通 ZIP 工具自然把它们当成目录并相互覆盖；但这些条目的 `file_size` 非零，解压后的首 4 bytes 全是 `CA FE BA BE`。解析 class constant pool 后，可以读到真实 `this_class`。这些真实名称包含 U+0000，因此不能原样作为操作系统文件名。
 
-| Hachimi class | Shoreline 对应/候选 | 置信度 | 依据 |
-|---|---|---:|---|
-| `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDnP\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmq\u200E` | FastPlace (world) | 中高 | `hookSet/GetItemUseCooldown` 同时出现在 AirPlace/FastPlace；TimeUnit/冷却控制更偏 FastPlace |
-| `pw/hachimi/client/\uFFFD\uFFFDaX\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDkl\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDih\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpR\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpT\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgg\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpZ\u200E` | InventorySync (exploit) | 高 | `hookSetRevision` 与 Shoreline InventorySync 唯一对应 |
-| `pw/hachimi/client/\uFFFD\uFFFDlR\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDfE\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDhF\u200E` | Nametags (render) | 高 | `hookDrawLayer` + Vector3f/fastutil 渲染特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDfB\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDhG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDeb\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDA\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDei\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcd\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbA\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDkr\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgi\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDfG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdC\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdI\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDlY\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgq\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDky\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDiu\u200E` | AntiSpam (misc) | 中 | 共享特征: Pattern, Matcher |
-| `pw/hachimi/client/\uFFFD\uFFFDir\u200E` | Spammer (misc) | 低 | 候选特征: execute |
-| `pw/hachimi/client/\uFFFD\uFFFDdG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmz\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDek\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqA\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDab\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDj\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDep\u200E` | Spammer (misc) | 中 | `charset` + `execute`/文件读取相关特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDna\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcm\u200E` | AutoCrystal (combat) | 低 | 候选特征: predict |
-| `pw/hachimi/client/\uFFFD\uFFFDfR\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDk\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcj\u200E` | Skeleton (render) | 低 | 候选特征: Quaternionf |
-| `pw/hachimi/client/\uFFFD\uFFFDkz\u200E` | Trajectories (render) | 低 | 候选特征: getProjectionMatrix, setProjectionMatrix |
-| `pw/hachimi/client/\uFFFD\uFFFDjW\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDoA\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDhT\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgx\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDet\u200E` | AutoCrystal (combat) | 低 | 候选特征: predict |
-| `pw/hachimi/client/\uFFFD\uFFFDf\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcq\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcn\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDd\u200E` | Crasher (exploit) | 中 | `Int2ObjectOpenHashMap`/fastutil 特征与 Crasher 源码重合 |
-| `pw/hachimi/client/\uFFFD\uFFFDrk\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqH\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDoD\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbL\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDe\u200E` | ExtendedFirework (exploit) | 高 | `hookExplodeAndRemove` 唯一对应 |
-| `pw/hachimi/client/\uFFFD\uFFFDrl\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDct\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDex\u200E` | Skeleton (render) | 低 | 候选特征: Quaternionf |
-| `pw/hachimi/client/\uFFFD\uFFFDni\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcu\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmG\u200E` | AutoTotem (combat) | 低 | 候选特征: LinkedHashSet |
-| `pw/hachimi/client/\uFFFD\uFFFDew\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdT\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpl\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdY\u200E` | Waypoints (render) | 低 | 候选特征: newConcurrentMap |
-| `pw/hachimi/client/\uFFFD\uFFFDcx\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpq\u200E` | AutoCrystal (combat) | 低 | 候选特征: predict |
-| `pw/hachimi/client/\uFFFD\uFFFDkF\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpr\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbS\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpo\u200E` | Skeleton (render) | 低 | 候选特征: Quaternionf |
-| `pw/hachimi/client/\uFFFD\uFFFDm\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDY\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDlm\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDji\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDiF\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmP\u200E` | FastPlace (world) | 低 | 候选特征: hookSetItemUseCooldown |
-| `pw/hachimi/client/\uFFFD\uFFFDmO\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDZ\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDhf\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqU\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDno\u200E` | Velocity (movement) | 高 | `setPlayerVelocityX/Z` 组合唯一对应 |
-| `pw/hachimi/client/\uFFFD\uFFFDbX\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDoQ\u200E` | Skeleton (render) | 低 | 候选特征: Quaternionf |
-| `pw/hachimi/client/\uFFFD\uFFFDkI\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmS\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDU\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDda\u200E` | NewChunks (exploit) | 高 | `newConcurrentHashSet` + Netty `Unpooled/copiedBuffer` |
-| `pw/hachimi/client/\uFFFD\uFFFDjo\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgD\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqZ\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDkM\u200E` | AutoCrystal (combat) | 低 | 候选特征: predict |
-| `pw/hachimi/client/\uFFFD\uFFFDeA\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDho\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDeG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbb\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDmU\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDjq\u200E` | Skeleton (render) | 低 | 候选特征: Quaternionf |
-| `pw/hachimi/client/\uFFFD\uFFFDgI\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdd\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDcH\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDhs\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDeI\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbc\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDeJ\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdi\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDaA\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdn\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDhv\u200E` | PacketFly (exploit) | 低 | 候选特征: ConcurrentMap, TimeUnit |
-| `pw/hachimi/client/\uFFFD\uFFFDhw\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDgT\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdo\u200E` | BetterChat (misc) | 高 | `SimpleDateFormat` 与聊天时间格式逻辑对应 |
-| `pw/hachimi/client/\uFFFD\uFFFDeM\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDkY\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDiU\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdm\u200E` | NoFall (movement) | 低 | 候选特征: hookSetOnGround |
-| `pw/hachimi/client/\uFFFD\uFFFDaF\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqf\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDob\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDql\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqi\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDdq\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDpG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDof\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbr\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDok\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDR\u200E` | AutoCrystal (combat) | 低 | 候选特征: predict |
-| `pw/hachimi/client/\uFFFD\uFFFDlE\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDol\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDbp\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDqn\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDoj\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDic\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDN\u200E` | Velocity (movement) | 低 | 候选特征: hookPlaySound |
-| `pw/hachimi/client/\uFFFD\uFFFDnM\u200E` | Shaders (render) | 高 | `hookRenderHand` + `hookGetBufferBuilders` + shader/OpenGL API |
-| `pw/hachimi/client/\uFFFD\uFFFDjE\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDke\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDjB\u200E` | AutoCrystal (combat) | 低 | 候选特征: predict |
-| `pw/hachimi/client/\uFFFD\uFFFDom\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDnJ\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDib\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDjC\u200E` | AntiSpam (misc) | 中 | 共享特征: Pattern, Matcher |
-| `pw/hachimi/client/\uFFFD\uFFFDon\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDnK\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
-| `pw/hachimi/client/\uFFFD\uFFFDlG\u200E` | — | 未确认 | 字符串被加密且缺少唯一 hook/API 特征 |
+建议使用以下安全命名策略：
 
-## 已确认/较强的 Module 映射重点
+```text
+class_1.class        -> pw.hachimi.client.\u0000ln\u200E
+class_2.class        -> pw.hachimi.client.\u0000fd\u200E
+...
+class_928.class      -> 对应 mapping 中 class_928 的真实内部名
+```
 
-- `pw/hachimi/client/\uFFFD\uFFFDpZ\u200E` → **InventorySyncModule** (`exploit`)，置信度：高。`hookSetRevision` 与 Shoreline InventorySync 唯一对应。
-- `pw/hachimi/client/\uFFFD\uFFFDhF\u200E` → **NametagsModule** (`render`)，置信度：高。`hookDrawLayer` + Vector3f/fastutil 渲染特征。
-- `pw/hachimi/client/\uFFFD\uFFFDe\u200E` → **ExtendedFireworkModule** (`exploit`)，置信度：高。`hookExplodeAndRemove` 唯一对应。
-- `pw/hachimi/client/\uFFFD\uFFFDno\u200E` → **VelocityModule** (`movement`)，置信度：高。`setPlayerVelocityX/Z` 组合唯一对应。
-- `pw/hachimi/client/\uFFFD\uFFFDda\u200E` → **NewChunksModule** (`exploit`)，置信度：高。`newConcurrentHashSet` + Netty `Unpooled/copiedBuffer`。
-- `pw/hachimi/client/\uFFFD\uFFFDnM\u200E` → **ShadersModule** (`render`)，置信度：高。`hookRenderHand` + `hookGetBufferBuilders` + shader/OpenGL API。
-- `pw/hachimi/client/\uFFFD\uFFFDdo\u200E` → **BetterChatModule** (`misc`)，置信度：高。`SimpleDateFormat` 与聊天时间格式逻辑对应。
-- `pw/hachimi/client/\uFFFD\uFFFDmq\u200E` → **FastPlaceModule** (`world`)，置信度：中高。`hookSet/GetItemUseCooldown` 同时出现在 AirPlace/FastPlace；TimeUnit/冷却控制更偏 FastPlace。
-- `pw/hachimi/client/\uFFFD\uFFFDd\u200E` → **CrasherModule** (`exploit`)，置信度：中。`Int2ObjectOpenHashMap`/fastutil 特征与 Crasher 源码重合。
-- `pw/hachimi/client/\uFFFD\uFFFDep\u200E` → **SpammerModule** (`misc`)，置信度：中。`charset` + `execute`/文件读取相关特征。
+其中 `hidden#NNN` 是本文为了定位原始 ZIP 中第 N 个伪目录 class 而添加的索引；它不是程序原始名称。
 
-## 全部 1005 个 class 分析
+## 3. 核心组件分析
 
-以下每一行都对应 ZIP 中 `class/` 下的一个实际 `.class` 文件。`内部名` 保留控制字符的 `\uXXXX` 表示，方便定位乱码类。`功能推定` 基于继承链、class reference、Brigadier/Mixin/Minecraft API 及 Shoreline 源码结构；混淆器注入的 DES/bootstrap 代码不视为业务功能。
+### 3.1 模块 / 事件 / Setting / 命令
 
-| # | 文件 | 内部名 | 父类 | 类型 | 字段/方法 | 主要外部引用 | 功能推定 |
-|---:|---|---|---|---|---:|---|---|
-| 0 | `class/0000___uFFFD__uFFFD_qx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 1 | `class/0001___uFFFD__uFFFD_pU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/8 | net/minecraft/class_243 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 2 | `class/0002___uFFFD__uFFFD_ot_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 4/12 | [I | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 3 | `class/0003___uFFFD__uFFFD_mp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1268, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 4 | `class/0004___uFFFD__uFFFD_nQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnQ\u200E` | `java/lang/Enum` | 枚举 | 8/10 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 5 | `class/0005___uFFFD__uFFFD_aW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 6 | `class/0006___uFFFD__uFFFD_nP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/14 | [I, net/minecraft/class_2248, net/minecraft/class_2338, net/minecraft/class_2189, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 7 | `class/0007___uFFFD__uFFFD_mo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 9/24 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 8 | `class/0008___uFFFD__uFFFD_z_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDz\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 9 | `class/0009___uFFFD__uFFFD_lL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlL\u200E` | `java/lang/Enum` | 枚举 | 7/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 10 | `class/0010___uFFFD__uFFFD_kk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | 专用辅助类 | 28/57 | [I, net/minecraft/class_2338, net/minecraft/class_3965, net/minecraft/class_638, net/minecraft/class_2596 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 11 | `class/0011___uFFFD__uFFFD_ig_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDig\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 10/4 | net/minecraft/class_1297, net/minecraft/class_4587, net/minecraft/class_4597, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 12 | `class/0012___uFFFD__uFFFD_jH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjH\u200E` | `java/lang/Enum` | 枚举 | 5/18 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 13 | `class/0013___uFFFD__uFFFD_gc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 14 | `class/0014___uFFFD__uFFFD_qy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqy\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 15 | `class/0015___uFFFD__uFFFD_pV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpV\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 16 | `class/0016___uFFFD__uFFFD_ou_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDou\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 17 | `class/0017___uFFFD__uFFFD_nR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnR\u200E` | `java/lang/Record` | 记录数据类 | 5/10 | — | Java Record，用于不可变参数/状态载体。 |
-| 18 | `class/0018___uFFFD__uFFFD_mq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/19 | [I, net/minecraft/class_1792, net/minecraft/class_746, net/minecraft/class_2885, net/minecraft/class_2596 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `FastPlaceModule`（中高置信度）。 |
-| 19 | `class/0019___uFFFD__uFFFD_aX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/12 | [I, net/minecraft/class_304, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 20 | `class/0020___uFFFD__uFFFD_lM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 3/4 | net/minecraft/class_744, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 21 | `class/0021___uFFFD__uFFFD_kl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/20 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 22 | `class/0022___uFFFD__uFFFD_ih_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDih\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/14 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 23 | `class/0023___uFFFD__uFFFD_jI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 24 | `class/0024___uFFFD__uFFFD_gd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | net/minecraft/class_1309, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 25 | `class/0025___uFFFD__uFFFD_hE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 26 | `class/0026___uFFFD__uFFFD_fA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfA\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 27 | `class/0027___uFFFD__uFFFD_qv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | 专用辅助类 | 6/12 | [I, com/google/gson/JsonArray, [Ljava/lang/Object;, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 28 | `class/0028___uFFFD__uFFFD_or_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDor\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 29 | `class/0029___uFFFD__uFFFD_pS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 30 | `class/0030___uFFFD__uFFFD_ga_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDga\u200E` | `java/lang/Object` | 工具/管理/数据类 | 9/26 | [I, net/minecraft/class_746, net/minecraft/class_1297, net/minecraft/class_243, net/minecraft/class_2828 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 31 | `class/0031___uFFFD__uFFFD_hB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhB\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/13 | [I, net/minecraft/class_332 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 32 | `class/0032___uFFFD__uFFFD_bx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 33 | `class/0033___uFFFD__uFFFD_cY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 34 | `class/0034___uFFFD__uFFFD_aU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_332, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 35 | `class/0035___uFFFD__uFFFD_oq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoq\u200E` | `java/lang/Object` | 工具/管理/数据类 | 7/18 | it/unimi/dsi/fastutil/objects/Object2IntOpenHashMap, org/apache/commons/io/IOUtils, it/unimi/dsi/fastutil/objects/Object2IntMap, com/mojang/blaze3d/systems/RenderSystem, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 36 | `class/0036___uFFFD__uFFFD_pR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/10 | net/minecraft/class_2846, net/minecraft/class_2596, [I, net/minecraft/class_2846$class_2847, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 37 | `class/0037___uFFFD__uFFFD_mm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmm\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 38 | `class/0038___uFFFD__uFFFD_x_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDjH\u200E` | 专用辅助类 | 1/12 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 39 | `class/0039___uFFFD__uFFFD_ki_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDki\u200E` | `net/minecraft/class_1309` | Minecraft 扩展类 | 4/14 | [I, net/minecraft/class_310, net/minecraft/class_243, net/minecraft/class_3610, net/minecraft/class_2338 | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 40 | `class/0040___uFFFD__uFFFD_lJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmd\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 41 | `class/0041___uFFFD__uFFFD_jF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjF\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/5 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 42 | `class/0042___uFFFD__uFFFD_ie_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDie\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 43 | `class/0043___uFFFD__uFFFD_qw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqw\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/8 | skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C, [Ljava/lang/Object; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 44 | `class/0044___uFFFD__uFFFD_pT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/14 | [I, [Lnet/minecraft/class_1664;, net/minecraft/class_1664, net/minecraft/class_315, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 45 | `class/0045___uFFFD__uFFFD_os_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDos\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmd\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 46 | `class/0046___uFFFD__uFFFD_cZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 47 | `class/0047___uFFFD__uFFFD_by_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDby\u200E` | `pw/hachimi/client/\uFFFD\uFFFDjl\u200E` | 配置容器/基础对象 | 10/21 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 模块与 waypoint 等配置容器的共同基础层。 |
-| 48 | `class/0048___uFFFD__uFFFD_aV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 49 | `class/0049___uFFFD__uFFFD_y_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 8/10 | net/minecraft/class_1309, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 50 | `class/0050___uFFFD__uFFFD_mn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmn\u200E` | `java/lang/Object` | 工具/管理/数据类 | 13/29 | it/unimi/dsi/fastutil/objects/ObjectArrayList, it/unimi/dsi/fastutil/chars/Char2ObjectOpenHashMap, it/unimi/dsi/fastutil/objects/Object2ObjectOpenHashMap, net/minecraft/class_4587, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 51 | `class/0051___uFFFD__uFFFD_nO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbh\u200E` | 专用辅助类 | 1/11 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 52 | `class/0052___uFFFD__uFFFD_kj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkj\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 53 | `class/0053__ReloadableShaderEffectManager.class` | `pw/hachimi/satin/ReloadableShaderEffectManager` | `java/lang/Object` | 工具/管理/数据类 | 2/14 | pw/hachimi/satin/ShaderEffectManager, it/unimi/dsi/fastutil/objects/ReferenceOpenHashSet, net/minecraft/class_1041, pw/hachimi/satin/ResettableManagedShaderEffect, net/minecraft/class_290 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 54 | `class/0054___uFFFD__uFFFD_jG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjG\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/20 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 55 | `class/0055___uFFFD__uFFFD_if_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDif\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | [I, net/minecraft/class_243 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 56 | `class/0056___uFFFD__uFFFD_hC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/9 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 57 | `class/0057___uFFFD__uFFFD_pY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpY\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 58 | `class/0058___uFFFD__uFFFD_ox_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDox\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 59 | `class/0059___uFFFD__uFFFD_mt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmt\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 60 | `class/0060___uFFFD__uFFFD_nU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnU\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 61 | `class/0061___uFFFD__uFFFD_kp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 7/34 | [I, [F, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 62 | `class/0062___uFFFD__uFFFD_lQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | `java/lang/Enum` | 枚举 | 31/38 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 63 | `class/0063___uFFFD__uFFFD_jM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1542, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 64 | `class/0064___uFFFD__uFFFD_il_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDil\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 65 | `class/0065___uFFFD__uFFFD_jL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 66 | `class/0066___uFFFD__uFFFD_ik_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDik\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2394, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 67 | `class/0067___uFFFD__uFFFD_hH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhH\u200E` | `java/lang/Object` | 工具/管理/数据类 | 15/66 | com/mojang/blaze3d/platform/GlStateManager, org/lwjgl/opengl/GL32C, org/joml/Matrix4f, [Ljava/lang/reflect/Field;, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 68 | `class/0068___uFFFD__uFFFD_gg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 17/16 | [I, net/minecraft/class_2586, net/minecraft/class_2595, net/minecraft/class_2350, net/minecraft/class_2745 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 69 | `class/0069___uFFFD__uFFFD_fD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpj\u200E` | 专用辅助类 | 1/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 70 | `class/0070___uFFFD__uFFFD_ec_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDec\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 10/16 | [I, [B, [Ljava/lang/String;, net/minecraft/class_2846, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 71 | `class/0071___uFFFD__uFFFD_v_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 72 | `class/0072___uFFFD__uFFFD_pZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/10 | [I, net/minecraft/class_2649, net/minecraft/class_2596, net/minecraft/class_1703, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `InventorySyncModule`（高置信度）。 |
-| 73 | `class/0073___uFFFD__uFFFD_oy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoy\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 74 | `class/0074___uFFFD__uFFFD_mu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/6 | net/minecraft/class_1309, com/llamalad7/mixinextras/injector/wrapoperation/Operation, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 75 | `class/0075___uFFFD__uFFFD_nV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnV\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 76 | `class/0076___uFFFD__uFFFD_kq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkq\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/13 | net/minecraft/class_2338, [I, net/minecraft/class_2248, net/minecraft/class_2189, it/unimi/dsi/fastutil/objects/ReferenceOpenHashSet | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 77 | `class/0077___uFFFD__uFFFD_lR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/10 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 78 | `class/0078___uFFFD__uFFFD_im_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDim\u200E` | `java/lang/Enum` | 枚举 | 7/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 79 | `class/0079___uFFFD__uFFFD_jN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjN\u200E` | `java/lang/Enum` | 枚举 | 8/15 | net/minecraft/class_1297, [I, net/minecraft/class_1309, [B, [Ljava/lang/String; | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 80 | `class/0080___uFFFD__uFFFD_hI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 4/13 | net/minecraft/class_332, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 81 | `class/0081___uFFFD__uFFFD_gh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 82 | `class/0082___uFFFD__uFFFD_ed_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDed\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 83 | `class/0083___uFFFD__uFFFD_fE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 20/36 | [I, net/minecraft/class_310, net/minecraft/class_408, net/minecraft/class_1041, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 84 | `class/0084___uFFFD__uFFFD_dA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdA\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/10 | net/minecraft/class_1297, net/minecraft/class_243, [I, net/minecraft/class_1309 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 85 | `class/0085___uFFFD__uFFFD_qz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 86 | `class/0086___uFFFD__uFFFD_ov_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDov\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 87 | `class/0087___uFFFD__uFFFD_pW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/9 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 88 | `class/0088___uFFFD__uFFFD_mr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDeh\u200E` | 专用辅助类 | 3/5 | [Lpw/hachimi/client/\uFFFD\uFFFDgW\u200E;, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 89 | `class/0089___uFFFD__uFFFD_kn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkn\u200E` | `java/lang/Record` | 记录数据类 | 5/10 | — | Java Record，用于不可变参数/状态载体。 |
-| 90 | `class/0090___uFFFD__uFFFD_lO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 91 | `class/0091___uFFFD__uFFFD_aY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaY\u200E` | `java/lang/Enum` | 枚举 | 5/9 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 92 | `class/0092___uFFFD__uFFFD_km_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkm\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/7 | skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 93 | `class/0093___uFFFD__uFFFD_jJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjJ\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 94 | `class/0094___uFFFD__uFFFD_ii_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDii\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 30/22 | [I, net/minecraft/class_243, net/minecraft/class_1297, [Lnet/minecraft/class_243;, net/minecraft/class_2338$class_2339 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 95 | `class/0095___uFFFD__uFFFD_ge_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDge\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 96 | `class/0096___uFFFD__uFFFD_hF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 34/41 | [I, org/joml/Vector3f, net/minecraft/class_4184, net/minecraft/class_1297, net/minecraft/class_243 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `NametagsModule`（高置信度）。 |
-| 97 | `class/0097___uFFFD__uFFFD_ea_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDea\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 98 | `class/0098___uFFFD__uFFFD_fB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/12 | [I, net/minecraft/class_1799, net/minecraft/class_746, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 99 | `class/0099___uFFFD__uFFFD_t_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDt\u200E` | `pw/hachimi/client/\uFFFD\uFFFDjH\u200E` | 专用辅助类 | 1/12 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 100 | `class/0100___uFFFD__uFFFD_ow_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | `java/lang/Enum` | 枚举 | 10/16 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 101 | `class/0101___uFFFD__uFFFD_pX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpX\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 102 | `class/0102___uFFFD__uFFFD_nT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 15/17 | [I, [Lnet/minecraft/class_304;, net/minecraft/class_304, net/minecraft/class_746, net/minecraft/class_7438 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 103 | `class/0103___uFFFD__uFFFD_ms_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDms\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 104 | `class/0104___uFFFD__uFFFD_ko_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDko\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/Command, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 105 | `class/0105___uFFFD__uFFFD_lP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 106 | `class/0106___uFFFD__uFFFD_ij_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDij\u200E` | `pw/hachimi/client/\uFFFD\uFFFDhA\u200E` | 专用辅助类 | 1/8 | net/minecraft/class_2338, net/minecraft/class_1657, net/minecraft/class_638, net/minecraft/class_2350, [Lnet/minecraft/class_2350; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 107 | `class/0107___uFFFD__uFFFD_hG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 28/26 | [I, net/minecraft/class_1297, net/minecraft/class_1657, net/minecraft/class_1511, net/minecraft/class_1542 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 108 | `class/0108___uFFFD__uFFFD_gf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgf\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 109 | `class/0109___uFFFD__uFFFD_u_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 110 | `class/0110___uFFFD__uFFFD_eb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/8 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 111 | `class/0111___uFFFD__uFFFD_fC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 27/33 | [I, net/minecraft/class_2350, net/minecraft/class_2338, net/minecraft/class_238, net/minecraft/class_1297 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 112 | `class/0112___uFFFD__uFFFD_A_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/16 | [I, net/minecraft/class_2827, net/minecraft/class_6374, net/minecraft/class_2856, net/minecraft/class_2596 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 113 | `class/0113___uFFFD__uFFFD_kt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkt\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/10 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 114 | `class/0114___uFFFD__uFFFD_lU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlU\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/30 | net/minecraft/class_243, [I, net/minecraft/class_2338, net/minecraft/class_238 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 115 | `class/0115___uFFFD__uFFFD_jQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjQ\u200E` | `java/lang/Record` | 记录数据类 | 7/12 | — | Java Record，用于不可变参数/状态载体。 |
-| 116 | `class/0116___uFFFD__uFFFD_ip_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDip\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 117 | `class/0117___uFFFD__uFFFD_hM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_5498, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 118 | `class/0118___uFFFD__uFFFD_gl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbR\u200E` | 专用辅助类 | 3/6 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 119 | `class/0119___uFFFD__uFFFD_eh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeh\u200E` | `java/lang/Object` | 工具/管理/数据类 | 27/28 | [Lpw/hachimi/client/\uFFFD\uFFFDgW\u200E;, [I, org/lwjgl/BufferUtils, org/lwjgl/system/MemoryUtil, net/minecraft/class_4587 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 120 | `class/0120___uFFFD__uFFFD_fI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 121 | `class/0121___uFFFD__uFFFD_ra_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDra\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 122 | `class/0122___uFFFD__uFFFD_nY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 6/7 | net/minecraft/class_332, net/minecraft/class_1799, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 123 | `class/0123___uFFFD__uFFFD_mx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmx\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/10 | net/minecraft/class_1799, [I, net/minecraft/class_1792, net/minecraft/class_746 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 124 | `class/0124___uFFFD__uFFFD_eg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 125 | `class/0125___uFFFD__uFFFD_fH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 43/46 | [I, net/minecraft/class_2248, net/minecraft/class_2399, net/minecraft/class_2338, net/minecraft/class_238 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 126 | `class/0126___uFFFD__uFFFD_cc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | 专用辅助类 | 5/12 | com/google/gson/JsonArray, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 127 | `class/0127___uFFFD__uFFFD_dD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/Command, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/arguments/StringArgumentType | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 128 | `class/0128___uFFFD__uFFFD_ku_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDku\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | net/minecraft/class_2586, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 129 | `class/0129___uFFFD__uFFFD_lV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 45/46 | [I, net/minecraft/class_2248, net/minecraft/class_2399, net/minecraft/class_2338, net/minecraft/class_238 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 130 | `class/0130___uFFFD__uFFFD_B_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDB\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 131 | `class/0131___uFFFD__uFFFD_jR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 132 | `class/0132___uFFFD__uFFFD_iq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiq\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 133 | `class/0133___uFFFD__uFFFD_gm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgm\u200E` | `net/minecraft/class_437` | GUI/Screen | 12/21 | net/minecraft/class_2561, [I, [Lpw/hachimi/client/\uFFFD\uFFFDkV\u200E;, net/minecraft/class_332, org/joml/Matrix4f | Minecraft Screen/GUI 相关界面或界面辅助。 |
-| 134 | `class/0134___uFFFD__uFFFD_fJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfJ\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 135 | `class/0135___uFFFD__uFFFD_ei_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDei\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/12 | [I, net/minecraft/class_746, net/minecraft/class_2338, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 136 | `class/0136___uFFFD__uFFFD_rb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrb\u200E` | `java/lang/Object` | 工具/管理/数据类 | 18/21 | net/minecraft/class_2338, net/minecraft/class_1792, [I, net/minecraft/class_1747, net/minecraft/class_2248 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 137 | `class/0137___uFFFD__uFFFD_my_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/7 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 138 | `class/0138___uFFFD__uFFFD_nZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | `java/lang/Object` | 框架基础类 | 6/14 | [I, [B, [C | 基础/管理类；被 170 个类直接继承。 |
-| 139 | `class/0139___uFFFD__uFFFD_dE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdE\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 140 | `class/0140___uFFFD__uFFFD_cd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/7 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 141 | `class/0141___uFFFD__uFFFD_bA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 24/26 | [I, net/minecraft/class_1792, net/minecraft/class_1810, net/minecraft/class_746, net/minecraft/class_2680 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 142 | `class/0142___uFFFD__uFFFD_mv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmv\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 143 | `class/0143___uFFFD__uFFFD_nW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnW\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 144 | `class/0144___uFFFD__uFFFD_kr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/11 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 145 | `class/0145___uFFFD__uFFFD_lS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmd\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 146 | `class/0146___uFFFD__uFFFD_jO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjO\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/10 | [Lnet/minecraft/class_1799;, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 147 | `class/0147___uFFFD__uFFFD_in_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | `pw/hachimi/client/\uFFFD\uFFFDby\u200E` | 模块基础层 | 2/4 | [I | 位于 Module/ToggleModule 基础继承链，承担模块元数据/配置容器职责。 |
-| 148 | `class/0148___uFFFD__uFFFD_gj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgj\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 149 | `class/0149___uFFFD__uFFFD_oz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoz\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 150 | `class/0150___uFFFD__uFFFD_hJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhJ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/39 | [I, net/minecraft/class_2868, net/minecraft/class_2596, net/minecraft/class_1799, net/minecraft/class_2653 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 151 | `class/0151___uFFFD__uFFFD_gi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/13 | [I, net/minecraft/class_1297, net/minecraft/class_2596, net/minecraft/class_1501, net/minecraft/class_1498 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 152 | `class/0152___uFFFD__uFFFD_ee_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDee\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 153 | `class/0153___uFFFD__uFFFD_fF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1452, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 154 | `class/0154___uFFFD__uFFFD_dB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 6/12 | [I, net/minecraft/class_332, org/apache/commons/lang3/ArrayUtils | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 155 | `class/0155___uFFFD__uFFFD_ca_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDca\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 156 | `class/0156___uFFFD__uFFFD_nX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnX\u200E` | `java/lang/Object` | 命令/参数辅助 | 2/9 | com/mojang/brigadier/arguments/ArgumentType, com/mojang/brigadier/context/CommandContext, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/StringReader, com/mojang/brigadier/suggestion/SuggestionsBuilder | Brigadier 命令解析、参数或补全辅助。 |
-| 157 | `class/0157___uFFFD__uFFFD_mw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmw\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 158 | `class/0158___uFFFD__uFFFD_ks_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDks\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 159 | `class/0159___uFFFD__uFFFD_jP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 17/21 | [I, net/minecraft/class_1799, net/minecraft/class_1268, [B, [Ljava/lang/String; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 160 | `class/0160___uFFFD__uFFFD_io_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDio\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 161 | `class/0161___uFFFD__uFFFD_hL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/8 | net/minecraft/class_4587, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 162 | `class/0162___uFFFD__uFFFD_gk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgk\u200E` | `net/minecraft/class_745` | Minecraft 扩展类 | 4/12 | net/minecraft/class_1657, [I, com/mojang/authlib/GameProfile, net/minecraft/class_638, net/minecraft/class_8080 | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 163 | `class/0163___uFFFD__uFFFD_fG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/14 | [I, net/minecraft/class_1297, net/minecraft/class_1501, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 164 | `class/0164___uFFFD__uFFFD_ef_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDef\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 165 | `class/0165___uFFFD__uFFFD_cb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 8/13 | [Ljava/lang/Object;, com/mojang/blaze3d/systems/RenderSystem, net/minecraft/class_332, [I, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 166 | `class/0166___uFFFD__uFFFD_dC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/12 | [I, net/minecraft/class_2767, net/minecraft/class_2596, net/minecraft/class_1536, net/minecraft/class_746 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 167 | `class/0167__aE.class` | `pw/hachimi/client/mixin/aE` | `java/lang/Object` | Mixin/Accessor | 0/3 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 168 | `class/0168___uFFFD__uFFFD_gp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 4/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 169 | `class/0169___uFFFD__uFFFD_hQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_437, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 170 | `class/0170__aC.class` | `pw/hachimi/client/mixin/aC` | `java/lang/Object` | Mixin/Accessor | 0/6 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 171 | `class/0171__Uniform1f.class` | `pw/hachimi/satin/uniform/Uniform1f` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 172 | `class/0172___uFFFD__uFFFD_el_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDel\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/12 | [I, net/minecraft/class_2338 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 173 | `class/0173___uFFFD__uFFFD_fM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 21/20 | [I, net/minecraft/class_243, net/minecraft/class_2338, net/minecraft/class_2350, net/minecraft/class_1792 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 174 | `class/0174__aa.class` | `pw/hachimi/client/aa` | `java/lang/Object` | 工具/管理/数据类 | 0/4 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 175 | `class/0175__aA.class` | `pw/hachimi/client/mixin/aA` | `java/lang/Object` | Mixin/Accessor | 0/3 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 176 | `class/0176___uFFFD__uFFFD_ch_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDch\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 177 | `class/0177__aB.class` | `pw/hachimi/client/mixin/aB` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 178 | `class/0178__Uniform1i.class` | `pw/hachimi/satin/uniform/Uniform1i` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 179 | `class/0179___uFFFD__uFFFD_dI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/12 | [I, net/minecraft/class_8042, net/minecraft/class_2596, net/minecraft/class_2645, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 180 | `class/0180__ab.class` | `pw/hachimi/client/ab` | `java/lang/Object` | 工具/管理/数据类 | 0/4 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 181 | `class/0181__ac.class` | `pw/hachimi/client/ac` | `java/lang/Object` | 工具/管理/数据类 | 0/6 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 182 | `class/0182___uFFFD__uFFFD_bE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 183 | `class/0183___uFFFD__uFFFD_ad_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDad\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/5 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 184 | `class/0184__ad.class` | `pw/hachimi/client/ad` | `java/lang/Object` | 工具/管理/数据类 | 6/17 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 185 | `class/0185__aM.class` | `pw/hachimi/client/mixin/aM` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 186 | `class/0186__ae.class` | `pw/hachimi/client/ae` | `java/lang/Object` | 工具/管理/数据类 | 14/23 | [I, [J | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 187 | `class/0187__aN.class` | `pw/hachimi/client/mixin/aN` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 188 | `class/0188___uFFFD__uFFFD_qB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqB\u200E` | `java/lang/Enum` | 枚举 | 8/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 189 | `class/0189___uFFFD__uFFFD_pa_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpa\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 190 | `class/0190__af.class` | `pw/hachimi/client/af` | `java/lang/Object` | 工具/管理/数据类 | 6/25 | [B, [Ljava/lang/String;, [I, [C, [Ljava/lang/reflect/Field; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 191 | `class/0191__aL.class` | `pw/hachimi/client/mixin/aL` | `java/lang/Object` | Mixin/Accessor | 0/4 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 192 | `class/0192__aI.class` | `pw/hachimi/client/mixin/aI` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 193 | `class/0193___uFFFD__uFFFD_lY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 21/29 | [I, net/minecraft/class_1799, net/minecraft/class_1770, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 194 | `class/0194___uFFFD__uFFFD_kx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkx\u200E` | `java/lang/Record` | 记录数据类 | 6/11 | — | Java Record，用于不可变参数/状态载体。 |
-| 195 | `class/0195___uFFFD__uFFFD_it_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDit\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/9 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 196 | `class/0196___uFFFD__uFFFD_jU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjU\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 197 | `class/0197__aP.class` | `pw/hachimi/client/mixin/aP` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 198 | `class/0198___uFFFD__uFFFD_re_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | `pw/hachimi/client/\uFFFD\uFFFDby\u200E` | 模块基础层 | 13/32 | [I, net/minecraft/class_3414, [B, [Ljava/lang/String;, [C | 位于 Module/ToggleModule 基础继承链，承担模块元数据/配置容器职责。 |
-| 199 | `class/0199___uFFFD__uFFFD_ac_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDac\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 200 | `class/0200___uFFFD__uFFFD_bD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_1309, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 201 | `class/0201__aZ.class` | `pw/hachimi/client/mixin/aZ` | `java/lang/Object` | Mixin/Accessor | 0/7 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 202 | `class/0202___uFFFD__uFFFD_gq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 35/41 | [I, net/minecraft/class_1297, net/minecraft/class_4587, net/minecraft/class_4184, net/minecraft/class_243 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 203 | `class/0203___uFFFD__uFFFD_hR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 5/13 | skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 204 | `class/0204__Uniform2f.class` | `pw/hachimi/satin/uniform/Uniform2f` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 205 | `class/0205___uFFFD__uFFFD_fN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 206 | `class/0206___uFFFD__uFFFD_em_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDem\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 207 | `class/0207__Uniform2i.class` | `pw/hachimi/satin/uniform/Uniform2i` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 208 | `class/0208___uFFFD__uFFFD_dJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbh\u200E` | 专用辅助类 | 1/11 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 209 | `class/0209___uFFFD__uFFFD_ci_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDci\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 210 | `class/0210___uFFFD__uFFFD_ae_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDae\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 211 | `class/0211___uFFFD__uFFFD_bF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 212 | `class/0212___uFFFD__uFFFD_qC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDhR\u200E` | 专用辅助类 | 2/5 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 213 | `class/0213___uFFFD__uFFFD_pb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpb\u200E` | `java/lang/Enum` | 枚举 | 7/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 214 | `class/0214___uFFFD__uFFFD_lZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 16/18 | [I, net/minecraft/class_332, net/minecraft/class_4587, [B, [Ljava/lang/String; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 215 | `class/0215___uFFFD__uFFFD_ky_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDky\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 19/23 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 216 | `class/0216___uFFFD__uFFFD_jV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjV\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 217 | `class/0217___uFFFD__uFFFD_iu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/39 | [I, [B, net/minecraft/class_239, net/minecraft/class_3965, net/minecraft/class_2338 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 218 | `class/0218___uFFFD__uFFFD_rf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrf\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 219 | `class/0219__Uniform3f.class` | `pw/hachimi/satin/uniform/Uniform3f` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 220 | `class/0220___uFFFD__uFFFD_ir_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDir\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/28 | [Ljava/lang/String;, [I, com/mojang/brigadier/CommandDispatcher, [B, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 221 | `class/0221___uFFFD__uFFFD_jS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 222 | `class/0222__Uniform3i.class` | `pw/hachimi/satin/uniform/Uniform3i` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 223 | `class/0223___uFFFD__uFFFD_hO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 224 | `class/0224___uFFFD__uFFFD_gn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 225 | `class/0225___uFFFD__uFFFD_ej_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDej\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 2/8 | net/minecraft/class_1799, [B, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 226 | `class/0226___uFFFD__uFFFD_fK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfK\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 227 | `class/0227___uFFFD__uFFFD_cf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcf\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 54/48 | [I, net/minecraft/class_310, net/minecraft/class_1041, com/mojang/blaze3d/systems/RenderSystem, net/minecraft/class_332 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 228 | `class/0228___uFFFD__uFFFD_dG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/16 | [I, net/minecraft/class_1799, net/minecraft/class_1770, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 229 | `class/0229___uFFFD__uFFFD_rc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrc\u200E` | `java/lang/Enum` | 枚举 | 6/12 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 230 | `class/0230___uFFFD__uFFFD_mz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 231 | `class/0231___uFFFD__uFFFD_lW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/9 | [I, net/minecraft/class_2586 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 232 | `class/0232___uFFFD__uFFFD_kv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkv\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/14 | [I, net/minecraft/class_6373, net/minecraft/class_2708, net/minecraft/class_2596, net/minecraft/class_243 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 233 | `class/0233___uFFFD__uFFFD_ce_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDce\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 4/9 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 234 | `class/0234___uFFFD__uFFFD_dF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 35/43 | [I, net/minecraft/class_2248, net/minecraft/class_1657, net/minecraft/class_8042, net/minecraft/class_2596 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 235 | `class/0235___uFFFD__uFFFD_bB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 236 | `class/0236___uFFFD__uFFFD_aa_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaa\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 237 | `class/0237___uFFFD__uFFFD_jT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDF\u200E` | 专用辅助类 | 2/5 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 238 | `class/0238___uFFFD__uFFFD_is_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDis\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/7 | [I, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 239 | `class/0239___uFFFD__uFFFD_go_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 240 | `class/0240__Uniform4i.class` | `pw/hachimi/satin/uniform/Uniform4i` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 241 | `class/0241___uFFFD__uFFFD_hP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhP\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 242 | `class/0242___uFFFD__uFFFD_ek_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDek\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/15 | [I, net/minecraft/class_238, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 243 | `class/0243___uFFFD__uFFFD_fL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfL\u200E` | `java/lang/Enum` | 枚举 | 9/16 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 244 | `class/0244___uFFFD__uFFFD_cg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDiQ\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 245 | `class/0245___uFFFD__uFFFD_dH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 246 | `class/0246___uFFFD__uFFFD_rd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrd\u200E` | `java/lang/Thread` | 专用辅助类 | 5/9 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 247 | `class/0247___uFFFD__uFFFD_qA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 39/65 | [I, net/minecraft/class_310, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 248 | `class/0248___uFFFD__uFFFD_kw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkw\u200E` | `java/lang/Enum` | 枚举 | 9/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 249 | `class/0249___uFFFD__uFFFD_lX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2596, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 250 | `class/0250__Uniform4f.class` | `pw/hachimi/satin/uniform/Uniform4f` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 251 | `class/0251___uFFFD__uFFFD_bC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbC\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 252 | `class/0252___uFFFD__uFFFD_ab_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDab\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 31/44 | [I, net/minecraft/class_2824, net/minecraft/class_2338, net/minecraft/class_2680, net/minecraft/class_238 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 253 | `class/0253___uFFFD__uFFFD_cl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 5/9 | net/minecraft/class_2350, [Ljava/lang/Object;, [B, [Ljava/lang/String;, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 254 | `class/0254___uFFFD__uFFFD_dM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 255 | `class/0255___uFFFD__uFFFD_ah_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDah\u200E` | `pw/hachimi/client/\uFFFD\uFFFDiG\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 256 | `class/0256___uFFFD__uFFFD_bI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 20/23 | [I, net/minecraft/class_243, net/minecraft/class_3965, net/minecraft/class_1297, net/minecraft/class_1657 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 257 | `class/0257___uFFFD__uFFFD_j_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 17/20 | [I, net/minecraft/class_742, [Ljava/lang/Object;, net/minecraft/class_2797, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 258 | `class/0258___uFFFD__uFFFD_jY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/6 | net/minecraft/class_243, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 259 | `class/0259___uFFFD__uFFFD_ix_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDix\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 260 | `class/0260___uFFFD__uFFFD_hU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/14 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/builder/RequiredArgumentBuilder, [I, com/mojang/brigadier/arguments/StringArgumentType, com/mojang/brigadier/builder/ArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 261 | `class/0261___uFFFD__uFFFD_gt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgt\u200E` | `java/lang/Enum` | 枚举 | 8/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 262 | `class/0262___uFFFD__uFFFD_fQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfQ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/8 | io/netty/util/internal/ConcurrentSet, net/minecraft/class_243, [I, net/minecraft/class_2382, net/minecraft/class_2338 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 263 | `class/0263___uFFFD__uFFFD_ep_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDep\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/18 | [I, [Ljava/lang/String;, com/mojang/brigadier/CommandDispatcher, [B, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `SpammerModule`（中置信度）。 |
-| 264 | `class/0264___uFFFD__uFFFD_ri_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDri\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/11 | net/minecraft/class_304, [I, net/minecraft/class_744, net/minecraft/class_241 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 265 | `class/0265___uFFFD__uFFFD_pe_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpe\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/13 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/Command, com/mojang/brigadier/arguments/StringArgumentType | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 266 | `class/0266___uFFFD__uFFFD_qF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 267 | `class/0267___uFFFD__uFFFD_na_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDna\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 28/37 | [I, it/unimi/dsi/fastutil/objects/ObjectLists, net/minecraft/class_332, net/minecraft/class_1799, net/minecraft/class_1747 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 268 | `class/0268___uFFFD__uFFFD_oB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoB\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/15 | [I, [Lpw/hachimi/client/\uFFFD\uFFFDnH\u200E; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 269 | `class/0269___uFFFD__uFFFD_dN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/7 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 270 | `class/0270___uFFFD__uFFFD_cm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/24 | [I, net/minecraft/class_1799, net/minecraft/class_1835, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 271 | `class/0271___uFFFD__uFFFD_ai_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDai\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaC\u200E` | 专用辅助类 | 1/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 272 | `class/0272___uFFFD__uFFFD_bJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbJ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/10 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 273 | `class/0273___uFFFD__uFFFD_iy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 4/6 | net/minecraft/class_2338, net/minecraft/class_2350, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 274 | `class/0274___uFFFD__uFFFD_hV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 275 | `class/0275___uFFFD__uFFFD_gu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 276 | `class/0276___uFFFD__uFFFD_eq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeq\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 277 | `class/0277___uFFFD__uFFFD_fR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/15 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 278 | `class/0278___uFFFD__uFFFD_rj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 279 | `class/0279___uFFFD__uFFFD_qG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 280 | `class/0280___uFFFD__uFFFD_pf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | `java/lang/Object` | 框架基础类 | 7/21 | [I, com/google/gson/Gson, com/google/gson/JsonObject, com/google/gson/JsonArray, [B | 基础/管理类；被 6 个类直接继承。 |
-| 281 | `class/0281___uFFFD__uFFFD_oC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 282 | `class/0282___uFFFD__uFFFD_k_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/20 | [I, net/minecraft/class_2708, net/minecraft/class_2596, net/minecraft/class_434, net/minecraft/class_2793 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 283 | `class/0283___uFFFD__uFFFD_nb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnb\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 284 | `class/0284___uFFFD__uFFFD_fO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 285 | `class/0285___uFFFD__uFFFD_en_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDen\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 286 | `class/0286___uFFFD__uFFFD_cj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/23 | [I, net/minecraft/class_4184, net/minecraft/class_243, com/mojang/blaze3d/systems/RenderSystem, org/joml/Matrix4f | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 287 | `class/0287___uFFFD__uFFFD_dK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdK\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 288 | `class/0288___uFFFD__uFFFD_bG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 289 | `class/0289___uFFFD__uFFFD_kz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/18 | [I, net/minecraft/class_4587, net/minecraft/class_1297, net/minecraft/class_239, net/minecraft/class_3965 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 290 | `class/0290___uFFFD__uFFFD_h_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 291 | `class/0291__a.class` | `pw/hachimi/client/a` | `java/lang/Object` | 工具/管理/数据类 | 0/24 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 292 | `class/0292___uFFFD__uFFFD_iv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/exceptions/CommandSyntaxException, [B, [Ljava/lang/String; | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 293 | `class/0293___uFFFD__uFFFD_jW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 18/16 | [I, net/minecraft/class_1657, net/minecraft/class_238, net/minecraft/class_4587, net/minecraft/class_243 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 294 | `class/0294__c.class` | `pw/hachimi/client/c` | `java/lang/Object` | 工具/管理/数据类 | 0/20 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 295 | `class/0295___uFFFD__uFFFD_gr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 10/13 | net/minecraft/class_332, [B, [J, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 296 | `class/0296__b.class` | `pw/hachimi/client/b` | `java/lang/Object` | 工具/管理/数据类 | 0/20 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 297 | `class/0297___uFFFD__uFFFD_hS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhS\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 298 | `class/0298__e.class` | `pw/hachimi/client/e` | `java/lang/Object` | 工具/管理/数据类 | 0/21 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 299 | `class/0299__d.class` | `pw/hachimi/client/d` | `java/lang/Object` | 工具/管理/数据类 | 0/19 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 300 | `class/0300__g.class` | `pw/hachimi/client/g` | `java/lang/Object` | 工具/管理/数据类 | 0/14 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 301 | `class/0301__f.class` | `pw/hachimi/client/f` | `java/lang/Object` | 工具/管理/数据类 | 0/20 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 302 | `class/0302__i.class` | `pw/hachimi/client/i` | `java/lang/Object` | 工具/管理/数据类 | 0/19 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 303 | `class/0303___uFFFD__uFFFD_rg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrg\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/22 | [I, net/minecraft/class_1657, com/mojang/authlib/GameProfile, net/minecraft/class_2561, net/minecraft/class_640 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 304 | `class/0304__h.class` | `pw/hachimi/client/h` | `java/lang/Object` | 工具/管理/数据类 | 0/12 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 305 | `class/0305__k.class` | `pw/hachimi/client/k` | `java/lang/Object` | 工具/管理/数据类 | 0/10 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 306 | `class/0306___uFFFD__uFFFD_pc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpc\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 307 | `class/0307__j.class` | `pw/hachimi/client/j` | `java/lang/Object` | 工具/管理/数据类 | 0/17 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 308 | `class/0308___uFFFD__uFFFD_qD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 309 | `class/0309__m.class` | `pw/hachimi/client/m` | `java/lang/Object` | 工具/管理/数据类 | 0/25 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 310 | `class/0310__l.class` | `pw/hachimi/client/l` | `java/lang/Object` | 工具/管理/数据类 | 0/17 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 311 | `class/0311__o.class` | `pw/hachimi/client/o` | `java/lang/Object` | 工具/管理/数据类 | 0/11 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 312 | `class/0312__n.class` | `pw/hachimi/client/n` | `java/lang/Object` | 工具/管理/数据类 | 0/17 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 313 | `class/0313__q.class` | `pw/hachimi/client/q` | `java/lang/Object` | 工具/管理/数据类 | 0/10 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 314 | `class/0314__p.class` | `pw/hachimi/client/p` | `java/lang/Object` | 工具/管理/数据类 | 0/9 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 315 | `class/0315__s.class` | `pw/hachimi/client/s` | `java/lang/Object` | 工具/管理/数据类 | 0/10 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 316 | `class/0316__r.class` | `pw/hachimi/client/r` | `java/lang/Object` | 工具/管理/数据类 | 0/9 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 317 | `class/0317___uFFFD__uFFFD_eo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 318 | `class/0318___uFFFD__uFFFD_fP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 319 | `class/0319__u.class` | `pw/hachimi/client/u` | `java/lang/Object` | 工具/管理/数据类 | 0/8 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 320 | `class/0320__t.class` | `pw/hachimi/client/t` | `java/lang/Object` | 工具/管理/数据类 | 0/7 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 321 | `class/0321___uFFFD__uFFFD_ck_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDck\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | net/minecraft/class_1799, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 322 | `class/0322___uFFFD__uFFFD_dL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdL\u200E` | `java/lang/Enum` | 枚举 | 8/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 323 | `class/0323__w.class` | `pw/hachimi/client/w` | `java/lang/Object` | 工具/管理/数据类 | 0/8 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 324 | `class/0324__v.class` | `pw/hachimi/client/v` | `java/lang/Object` | 工具/管理/数据类 | 0/10 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 325 | `class/0325___uFFFD__uFFFD_bH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 6/13 | net/minecraft/class_332, net/minecraft/class_1297, [I, net/minecraft/class_1309, net/minecraft/class_1799 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 326 | `class/0326___uFFFD__uFFFD_ag_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDag\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 327 | `class/0327__y.class` | `pw/hachimi/client/y` | `java/lang/Object` | 工具/管理/数据类 | 0/8 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 328 | `class/0328__x.class` | `pw/hachimi/client/x` | `java/lang/Object` | 工具/管理/数据类 | 0/8 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 329 | `class/0329__z.class` | `pw/hachimi/client/z` | `java/lang/Object` | 工具/管理/数据类 | 0/6 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 330 | `class/0330___uFFFD__uFFFD_oA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/23 | [I, net/minecraft/class_640, com/mojang/authlib/GameProfile, net/minecraft/class_1297, net/minecraft/class_2596 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 331 | `class/0331___uFFFD__uFFFD_i_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 39/50 | [I, net/minecraft/class_2382, net/minecraft/class_1297, net/minecraft/class_1511, [Lnet/minecraft/class_2350; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 332 | `class/0332___uFFFD__uFFFD_jX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjX\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/15 | [I, net/minecraft/class_2620, net/minecraft/class_2596, net/minecraft/class_2338 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 333 | `class/0333___uFFFD__uFFFD_iw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiw\u200E` | `java/lang/Object` | 工具/管理/数据类 | 9/15 | [I, net/minecraft/class_1792, net/minecraft/class_1799, net/minecraft/class_1735 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 334 | `class/0334___uFFFD__uFFFD_gs_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 6/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/arguments/StringArgumentType, com/mojang/brigadier/builder/RequiredArgumentBuilder, [Ljava/lang/String; | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 335 | `class/0335___uFFFD__uFFFD_hT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/27 | [I, net/minecraft/class_1792, net/minecraft/class_1735, net/minecraft/class_1799, net/minecraft/class_1703 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 336 | `class/0336___uFFFD__uFFFD_rh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrh\u200E` | `java/lang/Record` | 记录数据类 | 7/12 | — | Java Record，用于不可变参数/状态载体。 |
-| 337 | `class/0337___uFFFD__uFFFD_qE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/7 | net/minecraft/class_746, net/minecraft/class_1268, net/minecraft/class_3965, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 338 | `class/0338___uFFFD__uFFFD_pd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpd\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/9 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 339 | `class/0339___uFFFD__uFFFD_gx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/16 | [I, net/minecraft/class_2886, net/minecraft/class_2846, net/minecraft/class_2596, net/minecraft/class_1799 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 340 | `class/0340___uFFFD__uFFFD_hY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhY\u200E` | `java/lang/Enum` | 枚举 | 6/11 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 341 | `class/0341___uFFFD__uFFFD_et_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDet\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 23/32 | [I, net/minecraft/class_1799, net/minecraft/class_1781, net/minecraft/class_1297, net/minecraft/class_1671 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 342 | `class/0342___uFFFD__uFFFD_fU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 16/23 | [I, net/minecraft/class_6880, net/minecraft/class_1799, net/minecraft/class_1844, net/minecraft/class_1293 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 343 | `class/0343___uFFFD__uFFFD_cp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcp\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/13 | net/minecraft/class_1297, net/minecraft/class_1309, [I, net/minecraft/class_1569, net/minecraft/class_4466 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 344 | `class/0344___uFFFD__uFFFD_f_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDf\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 15/16 | [I, net/minecraft/class_1799, net/minecraft/class_1738, net/minecraft/class_490, net/minecraft/class_1792 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 345 | `class/0345___uFFFD__uFFFD_dQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_1671, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 346 | `class/0346___uFFFD__uFFFD_bM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbM\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/25 | [I, [F, [B, [Ljava/lang/String;, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 347 | `class/0347___uFFFD__uFFFD_al_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDal\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/9 | com/mojang/brigadier/arguments/FloatArgumentType, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 348 | `class/0348___uFFFD__uFFFD_ne_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDne\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 349 | `class/0349___uFFFD__uFFFD_oF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 350 | `class/0350___uFFFD__uFFFD_mB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmB\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 351 | `class/0351__EventListener.class` | `pw/hachimi/eventbus/annotation/EventListener` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 352 | `class/0352___uFFFD__uFFFD_rm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 353 | `class/0353___uFFFD__uFFFD_hZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 354 | `class/0354___uFFFD__uFFFD_gy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/5 | net/minecraft/class_303$class_7590, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 355 | `class/0355___uFFFD__uFFFD_eu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 356 | `class/0356___uFFFD__uFFFD_g_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDg\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 357 | `class/0357___uFFFD__uFFFD_fV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 358 | `class/0358___uFFFD__uFFFD_cq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/13 | [I, com/mojang/blaze3d/systems/RenderSystem, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 359 | `class/0359___uFFFD__uFFFD_dR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdR\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 360 | `class/0360___uFFFD__uFFFD_bN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 361 | `class/0361___uFFFD__uFFFD_am_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDam\u200E` | `pw/hachimi/client/\uFFFD\uFFFDrc\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 362 | `class/0362___uFFFD__uFFFD_qK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqK\u200E` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | 专用辅助类 | 10/25 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 363 | `class/0363___uFFFD__uFFFD_pj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlX\u200E` | 专用辅助类 | 3/5 | net/minecraft/class_2596, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 364 | `class/0364___uFFFD__uFFFD_nf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnf\u200E` | `java/lang/Object` | 工具/管理/数据类 | 11/5 | net/minecraft/class_4587 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 365 | `class/0365___uFFFD__uFFFD_oG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDE\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 366 | `class/0366___uFFFD__uFFFD_lb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 11/9 | [I, net/minecraft/class_243, [Ljava/lang/Object;, [B, [Ljava/lang/String; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 367 | `class/0367___uFFFD__uFFFD_bK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbK\u200E` | `java/lang/Object` | 工具/管理/数据类 | 12/17 | net/minecraft/class_922, net/minecraft/class_1309, net/minecraft/class_1297, net/minecraft/class_897, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 368 | `class/0368___uFFFD__uFFFD_aj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaj\u200E` | `java/lang/Enum` | 枚举 | 8/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 369 | `class/0369___uFFFD__uFFFD_iz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiz\u200E` | `java/lang/Object` | 工具/管理/数据类 | 15/30 | [I, net/minecraft/class_2828, net/minecraft/class_2596, net/minecraft/class_2828$class_2830, skidonion/vLZkx/___ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 370 | `class/0370___uFFFD__uFFFD_hW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhW\u200E` | `net/minecraft/class_437` | GUI/Screen | 20/22 | net/minecraft/class_2561, [I, [Lpw/hachimi/client/\uFFFD\uFFFDkV\u200E;, net/minecraft/class_332, [B | Minecraft Screen/GUI 相关界面或界面辅助。 |
-| 371 | `class/0371___uFFFD__uFFFD_gv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 372 | `class/0372___uFFFD__uFFFD_er_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDer\u200E` | `java/lang/Object` | 工具/管理/数据类 | 13/14 | it/unimi/dsi/fastutil/chars/Char2ObjectArrayMap, [I, net/minecraft/class_1011, org/lwjgl/system/MemoryUtil, net/minecraft/class_2960 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 373 | `class/0373___uFFFD__uFFFD_fS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfS\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 374 | `class/0374___uFFFD__uFFFD_dO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 375 | `class/0375___uFFFD__uFFFD_cn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/10 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 376 | `class/0376___uFFFD__uFFFD_d_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/18 | [I, net/minecraft/class_1703, net/minecraft/class_1738, net/minecraft/class_1799, net/minecraft/class_2813 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `CrasherModule`（中置信度）。 |
-| 377 | `class/0377___uFFFD__uFFFD_rk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/15 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 378 | `class/0378___uFFFD__uFFFD_qH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 18/29 | [I, net/minecraft/class_1657, net/minecraft/class_1309, net/minecraft/class_1538, net/minecraft/class_243 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 379 | `class/0379___uFFFD__uFFFD_pg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 36/40 | [I, net/minecraft/class_1297, net/minecraft/class_2868, net/minecraft/class_1657, net/minecraft/class_1560 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 380 | `class/0380___uFFFD__uFFFD_nc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 381 | `class/0381___uFFFD__uFFFD_oD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 28/21 | [I, net/minecraft/class_2596, [Ljava/lang/Object;, net/minecraft/class_2960, net/minecraft/class_2879 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 382 | `class/0382___uFFFD__uFFFD_bL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 18/29 | [I, net/minecraft/class_239, net/minecraft/class_3965, net/minecraft/class_2338, skidonion/vLZkx/___ | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 383 | `class/0383___uFFFD__uFFFD_ak_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDak\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 384 | `class/0384___uFFFD__uFFFD_gw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgw\u200E` | `java/lang/Enum` | 枚举 | 3/8 | [B, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 385 | `class/0385___uFFFD__uFFFD_hX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/Command, com/mojang/brigadier/builder/ArgumentBuilder, com/mojang/brigadier/builder/RequiredArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 386 | `class/0386___uFFFD__uFFFD_es_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDes\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_1268, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 387 | `class/0387___uFFFD__uFFFD_e_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDe\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/21 | [I, net/minecraft/class_1297, net/minecraft/class_1671, net/minecraft/class_6374, net/minecraft/class_2596 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `ExtendedFireworkModule`（高置信度）。 |
-| 388 | `class/0388___uFFFD__uFFFD_fT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 17/24 | [I, net/minecraft/class_1297, net/minecraft/class_1309, net/minecraft/class_1657, net/minecraft/class_243 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 389 | `class/0389___uFFFD__uFFFD_co_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDco\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 390 | `class/0390___uFFFD__uFFFD_dP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdP\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 391 | `class/0391___uFFFD__uFFFD_rl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDrl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/25 | [I, net/minecraft/class_238, net/minecraft/class_746, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 392 | `class/0392___uFFFD__uFFFD_qI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqI\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/5 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 393 | `class/0393___uFFFD__uFFFD_oE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoE\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 394 | `class/0394___uFFFD__uFFFD_nd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/arguments/StringArgumentType, com/mojang/brigadier/builder/ArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 395 | `class/0395___uFFFD__uFFFD_mA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDeu\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 396 | `class/0396___uFFFD__uFFFD_dU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 7/13 | net/minecraft/class_332, [I, net/minecraft/class_6880, net/minecraft/class_1799, net/minecraft/class_1844 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 397 | `class/0397___uFFFD__uFFFD_ct_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDct\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/20 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 398 | `class/0398___uFFFD__uFFFD_bQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbQ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 12/12 | net/minecraft/class_2960, net/minecraft/class_3414, [I, [B, [Ljava/lang/String; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 399 | `class/0399___uFFFD__uFFFD_ap_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDap\u200E` | `java/lang/Enum` | 枚举 | 5/11 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 400 | `class/0400___uFFFD__uFFFD_le_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDle\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/8 | net/minecraft/class_2680, net/minecraft/class_2338, net/minecraft/class_2248, [I, net/minecraft/class_2304 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 401 | `class/0401___uFFFD__uFFFD_r_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 402 | `class/0402___uFFFD__uFFFD_mF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmF\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 403 | `class/0403___uFFFD__uFFFD_kB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkB\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/23 | [I, net/minecraft/class_1657, net/minecraft/class_746, net/minecraft/class_7591, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 404 | `class/0404___uFFFD__uFFFD_ja_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDja\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 405 | `class/0405___uFFFD__uFFFD_fY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfY\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 406 | `class/0406___uFFFD__uFFFD_ex_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDex\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/10 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 407 | `class/0407___uFFFD__uFFFD_pm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/7 | net/minecraft/class_2338, net/minecraft/class_2680, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 408 | `class/0408___uFFFD__uFFFD_qN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 409 | `class/0409___uFFFD__uFFFD_oJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoJ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/19 | [Lpw/hachimi/client/\uFFFD\uFFFDfj\u200E;, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 410 | `class/0410___uFFFD__uFFFD_ni_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDni\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/17 | [I, net/minecraft/class_1792, net/minecraft/class_471, net/minecraft/class_1799, net/minecraft/class_1706 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 411 | `class/0411___uFFFD__uFFFD_dV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdV\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/6 | net/minecraft/class_1657, net/minecraft/class_1799, net/minecraft/class_2680, net/minecraft/class_1792, net/minecraft/class_9304 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 412 | `class/0412___uFFFD__uFFFD_cu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/13 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, net/minecraft/class_2848, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 413 | `class/0413___uFFFD__uFFFD_bR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDeU\u200E` | 专用辅助类 | 6/9 | [I, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 414 | `class/0414___uFFFD__uFFFD_aq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | net/minecraft/class_639, net/minecraft/class_642, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 415 | `class/0415___uFFFD__uFFFD_lf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlf\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 14/15 | [I, net/minecraft/class_2338, [Lnet/minecraft/class_2350;, net/minecraft/class_2350, skidonion/vLZkx/___ | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 416 | `class/0416___uFFFD__uFFFD_mG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 31/27 | [I, net/minecraft/class_2596, net/minecraft/class_2749, net/minecraft/class_2653, net/minecraft/class_1657 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 417 | `class/0417___uFFFD__uFFFD_jb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/7 | net/minecraft/class_2561, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 418 | `class/0418___uFFFD__uFFFD_kC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkC\u200E` | `net/minecraft/class_4185` | Minecraft 扩展类 | 3/5 | net/minecraft/class_2561, net/minecraft/class_4185$class_4241, [I, net/minecraft/class_332 | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 419 | `class/0419___uFFFD__uFFFD_fZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/13 | net/minecraft/class_243, [I, net/minecraft/class_1297, net/minecraft/class_238 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 420 | `class/0420___uFFFD__uFFFD_ey_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDey\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbh\u200E` | 专用辅助类 | 1/11 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 421 | `class/0421___uFFFD__uFFFD_oK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoK\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/10 | net/minecraft/class_2338, [I, net/minecraft/class_1799, net/minecraft/class_1735, net/minecraft/class_2680 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 422 | `class/0422___uFFFD__uFFFD_nj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDae\u200E` | 专用辅助类 | 8/11 | net/minecraft/class_2561, net/minecraft/class_332, net/minecraft/class_327, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 423 | `class/0423___uFFFD__uFFFD_s_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 14/20 | net/minecraft/class_332, [I, [F, com/mojang/blaze3d/systems/RenderSystem, org/apache/commons/lang3/ArrayUtils | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 424 | `class/0424__UniformMat4.class` | `pw/hachimi/satin/uniform/UniformMat4` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 425 | `class/0425___uFFFD__uFFFD_fW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 36/57 | [I, net/minecraft/class_2248, net/minecraft/class_2680, net/minecraft/class_638, net/minecraft/class_2338 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 426 | `class/0426___uFFFD__uFFFD_dS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 9/4 | net/minecraft/class_4587, net/minecraft/class_4597, net/minecraft/class_1306, net/minecraft/class_1007, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 427 | `class/0427___uFFFD__uFFFD_cr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/7 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 428 | `class/0428___uFFFD__uFFFD_an_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDan\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 429 | `class/0429___uFFFD__uFFFD_bO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbO\u200E` | `java/lang/Object` | 工具/管理/数据类 | 9/31 | [I, net/minecraft/class_639, net/minecraft/class_642, net/minecraft/class_2535, net/minecraft/class_635 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 430 | `class/0430___uFFFD__uFFFD_ng_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDng\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbR\u200E` | 专用辅助类 | 10/17 | net/minecraft/class_332, [I, org/apache/commons/lang3/ArrayUtils, [B, [Ljava/lang/String; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 431 | `class/0431___uFFFD__uFFFD_mD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 432 | `class/0432___uFFFD__uFFFD_lc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 433 | `class/0433___uFFFD__uFFFD_p_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_4184, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 434 | `class/0434___uFFFD__uFFFD_gz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 435 | `class/0435___uFFFD__uFFFD_qL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | [I, org/apache/commons/lang3/StringUtils | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 436 | `class/0436___uFFFD__uFFFD_pk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 437 | `class/0437___uFFFD__uFFFD_ew_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDew\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 15/23 | [I, net/minecraft/class_2596, net/minecraft/class_1511, net/minecraft/class_634, net/minecraft/class_746 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 438 | `class/0438___uFFFD__uFFFD_fX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfX\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 439 | `class/0439___uFFFD__uFFFD_dT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/9 | net/minecraft/class_2815, net/minecraft/class_2596, [I, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 440 | `class/0440___uFFFD__uFFFD_cs_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 15/13 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 441 | `class/0441___uFFFD__uFFFD_bP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/Command, com/mojang/brigadier/arguments/DoubleArgumentType, com/mojang/brigadier/builder/RequiredArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 442 | `class/0442___uFFFD__uFFFD_ao_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDao\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 443 | `class/0443___uFFFD__uFFFD_q_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 444 | `class/0444___uFFFD__uFFFD_oI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoI\u200E` | `java/lang/Object` | 命令/参数辅助 | 6/14 | com/mojang/brigadier/arguments/ArgumentType, [I, com/mojang/brigadier/context/CommandContext, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/StringReader | Brigadier 命令解析、参数或补全辅助。 |
-| 445 | `class/0445___uFFFD__uFFFD_ld_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDld\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, net/minecraft/class_1799, [I | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 446 | `class/0446___uFFFD__uFFFD_mE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmE\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 447 | `class/0447___uFFFD__uFFFD_kA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkA\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/4 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 448 | `class/0448___uFFFD__uFFFD_pl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/22 | [I, net/minecraft/class_8042, net/minecraft/class_2616, net/minecraft/class_2596, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 449 | `class/0449___uFFFD__uFFFD_qM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqM\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/9 | [I, net/minecraft/class_2791 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 450 | `class/0450___uFFFD__uFFFD_iB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 451 | `class/0451___uFFFD__uFFFD_ha_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDha\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/9 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 452 | `class/0452___uFFFD__uFFFD_n_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDE\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 453 | `class/0453___uFFFD__uFFFD_dY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/31 | [I, com/google/common/collect/Maps, net/minecraft/class_8042, net/minecraft/class_2596, net/minecraft/class_2703 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 454 | `class/0454___uFFFD__uFFFD_cx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 455 | `class/0455___uFFFD__uFFFD_at_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDat\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 456 | `class/0456___uFFFD__uFFFD_bU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 457 | `class/0457___uFFFD__uFFFD_qR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 11/9 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 458 | `class/0458___uFFFD__uFFFD_pq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/17 | [I, net/minecraft/class_2338, net/minecraft/class_243, [F, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 459 | `class/0459___uFFFD__uFFFD_nm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | net/minecraft/class_1799, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 460 | `class/0460___uFFFD__uFFFD_oN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1799, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 461 | `class/0461___uFFFD__uFFFD_mJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | net/minecraft/class_4587, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 462 | `class/0462___uFFFD__uFFFD_li_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDli\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 463 | `class/0463___uFFFD__uFFFD_kF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/10 | [I, net/minecraft/class_418, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 464 | `class/0464___uFFFD__uFFFD_ps_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDps\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | net/minecraft/class_1297, net/minecraft/class_1297$class_5529, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 465 | `class/0465___uFFFD__uFFFD_iC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 466 | `class/0466___uFFFD__uFFFD_hb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | 专用辅助类 | 31/15 | [I, baritone/api/BaritoneAPI, baritone/api/Settings, baritone/api/Settings$Setting, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 467 | `class/0467___uFFFD__uFFFD_o_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 468 | `class/0468___uFFFD__uFFFD_dZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/15 | net/minecraft/class_1087, net/minecraft/class_2350, [I, net/minecraft/class_2680, net/minecraft/class_5819 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 469 | `class/0469___uFFFD__uFFFD_cy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 470 | `class/0470___uFFFD__uFFFD_bV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbV\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 471 | `class/0471___uFFFD__uFFFD_au_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDau\u200E` | `pw/hachimi/client/\uFFFD\uFFFDby\u200E` | 模块基础层 | 6/18 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 位于 Module/ToggleModule 基础继承链，承担模块元数据/配置容器职责。 |
-| 472 | `class/0472___uFFFD__uFFFD_qS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, [I, com/mojang/brigadier/arguments/StringArgumentType, com/mojang/brigadier/builder/RequiredArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 473 | `class/0473___uFFFD__uFFFD_pr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/23 | [I, net/minecraft/class_746, net/minecraft/class_238, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 474 | `class/0474___uFFFD__uFFFD_oO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoO\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/5 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 475 | `class/0475___uFFFD__uFFFD_nn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnn\u200E` | `java/lang/Enum` | 枚举 | 8/13 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 476 | `class/0476___uFFFD__uFFFD_mK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmK\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/22 | [I, com/mojang/blaze3d/systems/RenderSystem, net/minecraft/class_4587, net/minecraft/class_4184, net/minecraft/class_243 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 477 | `class/0477___uFFFD__uFFFD_lj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlj\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 478 | `class/0478___uFFFD__uFFFD_jf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjf\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 479 | `class/0479___uFFFD__uFFFD_kG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkG\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/5 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 480 | `class/0480__NativeBridge.class` | `pw/hachimi/local/NativeBridge` | `java/lang/Object` | 工具/管理/数据类 | 4/3 | com/sun/jna/NativeLibrary, com/sun/jna/WString, com/sun/jna/Function, com/sun/jna/Pointer, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 481 | `class/0481___uFFFD__uFFFD_bS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/16 | [I, net/minecraft/class_1799, net/minecraft/class_1738, net/minecraft/class_1792, [Z | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 482 | `class/0482___uFFFD__uFFFD_ar_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDar\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 483 | `class/0483___uFFFD__uFFFD_kD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | net/minecraft/class_4587, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 484 | `class/0484___uFFFD__uFFFD_jc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 485 | `class/0485___uFFFD__uFFFD_ez_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDez\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 1/9 | net/minecraft/class_332 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 486 | `class/0486___uFFFD__uFFFD_cv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 487 | `class/0487___uFFFD__uFFFD_dW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 15/11 | net/minecraft/class_1511, net/minecraft/class_4587, net/minecraft/class_630, net/minecraft/class_898, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 488 | `class/0488___uFFFD__uFFFD_l_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 5/18 | net/minecraft/class_1792, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 489 | `class/0489___uFFFD__uFFFD_po_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/23 | [I, net/minecraft/class_1297, net/minecraft/class_243, net/minecraft/class_4587, net/minecraft/class_4184 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 490 | `class/0490___uFFFD__uFFFD_qP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/Command, com/mojang/brigadier/arguments/StringArgumentType | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 491 | `class/0491___uFFFD__uFFFD_nk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnk\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/5 | [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 492 | `class/0492___uFFFD__uFFFD_mH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmH\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 493 | `class/0493___uFFFD__uFFFD_lg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 494 | `class/0494___uFFFD__uFFFD_as_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDas\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 12/4 | net/minecraft/class_922, net/minecraft/class_1309, net/minecraft/class_4587, net/minecraft/class_4597, net/minecraft/class_583 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 495 | `class/0495___uFFFD__uFFFD_bT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbT\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 496 | `class/0496__ResettableManagedShaderEffect.class` | `pw/hachimi/satin/ResettableManagedShaderEffect` | `pw/hachimi/satin/ResettableManagedShaderBase` | 专用辅助类 | 3/21 | pw/hachimi/satin/ManagedShaderEffect, net/minecraft/class_279, net/minecraft/class_310, com/google/common/base/Preconditions, pw/hachimi/satin/ManagedUniformBase | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 497 | `class/0497___uFFFD__uFFFD_jd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjd\u200E` | `java/lang/Enum` | 枚举 | 3/8 | [B, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 498 | `class/0498___uFFFD__uFFFD_kE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 499 | `class/0499___uFFFD__uFFFD_iA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/5 | net/minecraft/class_243, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 500 | `class/0500___uFFFD__uFFFD_m_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/10 | [I, net/minecraft/class_1657, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 501 | `class/0501___uFFFD__uFFFD_dX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 502 | `class/0502___uFFFD__uFFFD_qQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqQ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/10 | skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C, [Ljava/lang/Object; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 503 | `class/0503___uFFFD__uFFFD_pp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 504 | `class/0504___uFFFD__uFFFD_oM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoM\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/11 | net/minecraft/class_3965, [F, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 505 | `class/0505___uFFFD__uFFFD_nl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 506 | `class/0506___uFFFD__uFFFD_mI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmI\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/11 | [I, net/minecraft/class_2663, net/minecraft/class_1297, net/minecraft/class_2596, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 507 | `class/0507___uFFFD__uFFFD_lh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlh\u200E` | `java/lang/Enum` | 枚举 | 7/9 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 508 | `class/0508___uFFFD__uFFFD_qW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, [I, [B, [Ljava/lang/String; | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 509 | `class/0509___uFFFD__uFFFD_pv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 510 | `class/0510___uFFFD__uFFFD_nr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 4/7 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 511 | `class/0511___uFFFD__uFFFD_oS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbh\u200E` | 专用辅助类 | 1/11 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 512 | `class/0512__ShaderEffectManager.class` | `pw/hachimi/satin/ShaderEffectManager` | `java/lang/Object` | 工具/管理/数据类 | 0/7 | pw/hachimi/satin/ReloadableShaderEffectManager | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 513 | `class/0513___uFFFD__uFFFD_ax_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDax\u200E` | `pw/hachimi/client/\uFFFD\uFFFDfh\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 514 | `class/0514___uFFFD__uFFFD_Y_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/18 | [I, net/minecraft/class_1268, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 515 | `class/0515___uFFFD__uFFFD_lm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 23/21 | [I, net/minecraft/class_1297, net/minecraft/class_1560, net/minecraft/class_1590, net/minecraft/class_1493 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 516 | `class/0516___uFFFD__uFFFD_mN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmN\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 517 | `class/0517___uFFFD__uFFFD_kJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkJ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/7 | [I, net/minecraft/class_2338 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 518 | `class/0518___uFFFD__uFFFD_ji_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDji\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/16 | [I, net/minecraft/class_2639, net/minecraft/class_2596, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 519 | `class/0519___uFFFD__uFFFD_he_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhe\u200E` | `java/lang/Object` | 工具/管理/数据类 | 17/36 | net/minecraft/class_2338, net/minecraft/class_1268, net/minecraft/class_2350, [I, net/minecraft/class_2680 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 520 | `class/0520___uFFFD__uFFFD_iF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 19/23 | [I, net/minecraft/class_2338, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 521 | `class/0521___uFFFD__uFFFD_fa_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfa\u200E` | `java/lang/Object` | 工具/管理/数据类 | 9/15 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 522 | `class/0522___uFFFD__uFFFD_gB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/7 | net/minecraft/class_1309, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 523 | `class/0523___uFFFD__uFFFD_pw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpw\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/11 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 524 | `class/0524___uFFFD__uFFFD_qX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqX\u200E` | `java/lang/Object` | 命令/参数辅助 | 2/10 | com/mojang/brigadier/arguments/ArgumentType, com/mojang/brigadier/context/CommandContext, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/StringReader, [I | Brigadier 命令解析、参数或补全辅助。 |
-| 525 | `class/0525___uFFFD__uFFFD_oT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 526 | `class/0526___uFFFD__uFFFD_ns_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDns\u200E` | `pw/hachimi/client/\uFFFD\uFFFDiQ\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 527 | `class/0527___uFFFD__uFFFD_lo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 528 | `class/0528___uFFFD__uFFFD_mP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/19 | [I, net/minecraft/class_239, net/minecraft/class_3965, net/minecraft/class_2338, net/minecraft/class_1799 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 529 | `class/0529___uFFFD__uFFFD_bZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/17 | net/minecraft/class_243, [I, net/minecraft/class_2338, net/minecraft/class_1309, net/minecraft/class_238 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 530 | `class/0530___uFFFD__uFFFD_ay_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDay\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 18/29 | [I, net/minecraft/class_243, net/minecraft/class_3965, net/minecraft/class_2596, net/minecraft/class_1297 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 531 | `class/0531___uFFFD__uFFFD_ln_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDln\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 532 | `class/0532__ManagedCoreShader.class` | `pw/hachimi/satin/ManagedCoreShader` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | pw/hachimi/satin/uniform/UniformFinder | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 533 | `class/0533___uFFFD__uFFFD_mO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/14 | [I, net/minecraft/class_2248, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 534 | `class/0534___uFFFD__uFFFD_Z_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/21 | [I, net/minecraft/class_239, net/minecraft/class_3965, net/minecraft/class_238, net/minecraft/class_265 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 535 | `class/0535___uFFFD__uFFFD_kK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkK\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 536 | `class/0536___uFFFD__uFFFD_jj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/9 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 537 | `class/0537___uFFFD__uFFFD_hf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhf\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 3/6 | [B, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 538 | `class/0538___uFFFD__uFFFD_iG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 539 | `class/0539___uFFFD__uFFFD_gC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgC\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 540 | `class/0540___uFFFD__uFFFD_qU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 26/22 | [I, net/minecraft/class_1297, net/minecraft/class_1560, net/minecraft/class_1590, net/minecraft/class_1493 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 541 | `class/0541___uFFFD__uFFFD_cz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlX\u200E` | 专用辅助类 | 3/5 | net/minecraft/class_2547, net/minecraft/class_2596, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 542 | `class/0542___uFFFD__uFFFD_av_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDav\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 34/52 | [I, net/minecraft/class_1297, net/minecraft/class_1671, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 543 | `class/0543___uFFFD__uFFFD_bW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/5 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 544 | `class/0544___uFFFD__uFFFD_oP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 65/101 | [I, net/minecraft/class_2248, net/minecraft/class_238, net/minecraft/class_265, net/minecraft/class_243 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 545 | `class/0545___uFFFD__uFFFD_no_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDno\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 15/13 | [I, net/minecraft/class_243, net/minecraft/class_241, net/minecraft/class_2743, net/minecraft/class_2664 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `VelocityModule`（高置信度）。 |
-| 546 | `class/0546___uFFFD__uFFFD_W_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/1 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 547 | `class/0547___uFFFD__uFFFD_mL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmL\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/14 | [I, com/google/gson/JsonObject, com/google/gson/JsonElement, com/google/gson/JsonParser, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 548 | `class/0548___uFFFD__uFFFD_lk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlk\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 549 | `class/0549___uFFFD__uFFFD_kH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkH\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/5 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 550 | `class/0550___uFFFD__uFFFD_jg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/8 | net/minecraft/class_1297, net/minecraft/class_243, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 551 | `class/0551___uFFFD__uFFFD_hc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_744, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 552 | `class/0552___uFFFD__uFFFD_iD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/7 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 553 | `class/0553___uFFFD__uFFFD_pu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpu\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/14 | [Ljava/lang/String;, [I, net/minecraft/class_2350, net/minecraft/class_2350$class_2351, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 554 | `class/0554___uFFFD__uFFFD_qV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 22/18 | [I, net/minecraft/class_1684, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 555 | `class/0555___uFFFD__uFFFD_nq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnq\u200E` | `java/lang/Enum` | 枚举 | 7/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 556 | `class/0556___uFFFD__uFFFD_oR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 31/58 | [I, net/minecraft/class_1297, net/minecraft/class_238, net/minecraft/class_5329, net/minecraft/class_265 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 557 | `class/0557___uFFFD__uFFFD_gA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 558 | `class/0558___uFFFD__uFFFD_aw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaw\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 559 | `class/0559___uFFFD__uFFFD_bX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/16 | [I, net/minecraft/class_1293, net/minecraft/class_1799, net/minecraft/class_1810, net/minecraft/class_1829 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 560 | `class/0560___uFFFD__uFFFD_np_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 5/12 | net/minecraft/class_332, [I, org/apache/commons/lang3/ArrayUtils | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 561 | `class/0561___uFFFD__uFFFD_oQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 21/18 | org/joml/Vector3f, [I, net/minecraft/class_4587, net/minecraft/class_1657, net/minecraft/class_1297 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 562 | `class/0562___uFFFD__uFFFD_mM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmM\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 563 | `class/0563___uFFFD__uFFFD_ll_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDll\u200E` | `java/lang/Enum` | 枚举 | 7/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 564 | `class/0564___uFFFD__uFFFD_X_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDX\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 565 | `class/0565___uFFFD__uFFFD_kI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/12 | [I, net/minecraft/class_2680, net/minecraft/class_1799, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 566 | `class/0566___uFFFD__uFFFD_jh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjh\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 567 | `class/0567___uFFFD__uFFFD_iE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqL\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 568 | `class/0568___uFFFD__uFFFD_hd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/10 | [I, net/minecraft/class_241 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 569 | `class/0569___uFFFD__uFFFD_pz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpz\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 570 | `class/0570___uFFFD__uFFFD_oW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/9 | net/minecraft/class_1799, [I, net/minecraft/class_1738, net/minecraft/class_5321, net/minecraft/class_1741 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 571 | `class/0571___uFFFD__uFFFD_nv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnv\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 572 | `class/0572___uFFFD__uFFFD_lr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlr\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/11 | [I, net/minecraft/class_1297, net/minecraft/class_1657, net/minecraft/class_640 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 573 | `class/0573___uFFFD__uFFFD_mS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/12 | [I, net/minecraft/class_1657, net/minecraft/class_243, [B, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 574 | `class/0574___uFFFD__uFFFD_jn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_332, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 575 | `class/0575___uFFFD__uFFFD_kO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkO\u200E` | `java/lang/Enum` | 枚举 | 5/12 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 576 | `class/0576___uFFFD__uFFFD_iJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/5 | net/minecraft/class_243, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 577 | `class/0577___uFFFD__uFFFD_hi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 578 | `class/0578___uFFFD__uFFFD_gF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgF\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/19 | [I, [Ljava/lang/String;, [B, [C, [Ljava/lang/Object; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 579 | `class/0579___uFFFD__uFFFD_fe_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfe\u200E` | `java/lang/Enum` | 枚举 | 6/13 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 580 | `class/0580___uFFFD__uFFFD_U_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 581 | `class/0581___uFFFD__uFFFD_da_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDda\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 17/28 | [I, com/google/common/collect/Sets, net/minecraft/class_2586, net/minecraft/class_2636, net/minecraft/class_2338 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `NewChunksModule`（高置信度）。 |
-| 582 | `class/0582___uFFFD__uFFFD_eB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeB\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 583 | `class/0583___uFFFD__uFFFD_oX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDbR\u200E` | 专用辅助类 | 12/19 | [I, net/minecraft/class_332, net/minecraft/class_4587, [B, [J | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 584 | `class/0584___uFFFD__uFFFD_nw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnw\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/3 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 585 | `class/0585___uFFFD__uFFFD_mT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmT\u200E` | `net/minecraft/class_276` | Minecraft 扩展类 | 7/13 | [I, com/mojang/blaze3d/platform/GlStateManager, com/mojang/blaze3d/systems/RenderSystem, org/lwjgl/opengl/GL30 | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 586 | `class/0586___uFFFD__uFFFD_ls_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDls\u200E` | `java/lang/Object` | 工具/管理/数据类 | 9/12 | pw/hachimi/eventbus/annotation/EventListener, [I, [B, [Ljava/lang/String;, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 587 | `class/0587___uFFFD__uFFFD_kP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkP\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/10 | net/minecraft/class_1799, it/unimi/dsi/fastutil/objects/Object2IntMap, it/unimi/dsi/fastutil/objects/Object2IntMap$Entry, [I, net/minecraft/class_9304 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 588 | `class/0588___uFFFD__uFFFD_jo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/16 | [I, net/minecraft/class_310, net/minecraft/class_1044, com/mojang/blaze3d/systems/RenderSystem, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 589 | `class/0589___uFFFD__uFFFD_hk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 590 | `class/0590___uFFFD__uFFFD_iL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 591 | `class/0591___uFFFD__uFFFD_iK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiK\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/arguments/StringArgumentType, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 592 | `class/0592___uFFFD__uFFFD_hj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 593 | `class/0593___uFFFD__uFFFD_gG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/10 | [I, net/minecraft/class_2248, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 594 | `class/0594___uFFFD__uFFFD_ff_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDff\u200E` | `java/lang/Object` | 工具/管理/数据类 | 19/23 | net/minecraft/class_2338, [I, net/minecraft/class_2680, net/minecraft/class_1799, net/minecraft/class_1735 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 595 | `class/0595___uFFFD__uFFFD_eC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeC\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/11 | net/minecraft/class_2338, net/minecraft/class_2248, [I, net/minecraft/class_2261, net/minecraft/class_2551 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 596 | `class/0596___uFFFD__uFFFD_db_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdb\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 597 | `class/0597___uFFFD__uFFFD_V_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDfk\u200E` | 专用辅助类 | 12/27 | [I, net/minecraft/class_332, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 598 | `class/0598___uFFFD__uFFFD_px_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_2680, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 599 | `class/0599___uFFFD__uFFFD_qY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 17/16 | [I, net/minecraft/class_238, net/minecraft/class_1542, net/minecraft/class_1799, net/minecraft/class_1747 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 600 | `class/0600___uFFFD__uFFFD_oU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoU\u200E` | `java/lang/Enum` | 枚举 | 3/8 | [B, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 601 | `class/0601___uFFFD__uFFFD_nt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnt\u200E` | `java/lang/Object` | 工具/管理/数据类 | 7/16 | [I, [B, [J, [Ljava/lang/Object; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 602 | `class/0602___uFFFD__uFFFD_mQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/39 | com/mojang/blaze3d/systems/RenderSystem, net/minecraft/class_757, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 603 | `class/0603___uFFFD__uFFFD_lp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlp\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 604 | `class/0604___uFFFD__uFFFD_az_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 605 | `class/0605___uFFFD__uFFFD_jk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjk\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 606 | `class/0606___uFFFD__uFFFD_kL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/7 | net/minecraft/class_2338, net/minecraft/class_2680, net/minecraft/class_2350, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 607 | `class/0607___uFFFD__uFFFD_gD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/11 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 608 | `class/0608___uFFFD__uFFFD_fc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfc\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/19 | [Lpw/hachimi/client/\uFFFD\uFFFDgW\u200E;, net/minecraft/class_332, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 609 | `class/0609___uFFFD__uFFFD_S_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDS\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 610 | `class/0610___uFFFD__uFFFD_qZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/17 | [I, net/minecraft/class_2846, net/minecraft/class_2596, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 611 | `class/0611___uFFFD__uFFFD_py_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpy\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 612 | `class/0612___uFFFD__uFFFD_oV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 37/17 | net/minecraft/class_1799, net/minecraft/class_332, [I, net/minecraft/class_1735, net/minecraft/class_1792 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 613 | `class/0613___uFFFD__uFFFD_nu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 5/18 | net/minecraft/class_2248, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 614 | `class/0614___uFFFD__uFFFD_lq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/7 | net/minecraft/class_2680, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 615 | `class/0615___uFFFD__uFFFD_mR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmR\u200E` | `java/lang/Object` | 命令/参数辅助 | 9/59 | [I, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/CommandDispatcher, net/minecraft/class_408, skidonion/vLZkx/___ | Brigadier 命令解析、参数或补全辅助。 |
-| 616 | `class/0616___uFFFD__uFFFD_kN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkN\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 617 | `class/0617___uFFFD__uFFFD_jm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjm\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/5 | [I, net/minecraft/class_5321 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 618 | `class/0618___uFFFD__uFFFD_kM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 21/42 | [I, net/minecraft/class_1799, [Lnet/minecraft/class_304;, net/minecraft/class_304, net/minecraft/class_238 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 619 | `class/0619___uFFFD__uFFFD_jl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjl\u200E` | `java/lang/Object` | 工具/管理/数据类 | 10/24 | [I, [Lpw/hachimi/client/\uFFFD\uFFFDqt\u200E;, com/google/gson/JsonObject, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 620 | `class/0620___uFFFD__uFFFD_iI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiI\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/6 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 621 | `class/0621___uFFFD__uFFFD_fd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 622 | `class/0622___uFFFD__uFFFD_gE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgE\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 623 | `class/0623___uFFFD__uFFFD_eA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/12 | net/minecraft/class_2817, net/minecraft/class_8710, [I, net/minecraft/class_2596, net/minecraft/class_2960 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 624 | `class/0624___uFFFD__uFFFD_T_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDE\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 625 | `class/0625___uFFFD__uFFFD_mW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | [I, [Ljava/lang/Object;, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, com/mojang/brigadier/builder/RequiredArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 626 | `class/0626___uFFFD__uFFFD_lv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 627 | `class/0627___uFFFD__uFFFD_b_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2744, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 628 | `class/0628___uFFFD__uFFFD_kS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1268, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 629 | `class/0629___uFFFD__uFFFD_jr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 630 | `class/0630___uFFFD__uFFFD_iO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiO\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 631 | `class/0631___uFFFD__uFFFD_hn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, [I, com/mojang/brigadier/arguments/DoubleArgumentType, com/mojang/brigadier/builder/RequiredArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 632 | `class/0632___uFFFD__uFFFD_gK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgK\u200E` | `java/lang/Record` | 记录数据类 | 7/19 | net/minecraft/class_1799, net/minecraft/class_2480, net/minecraft/class_2371, net/minecraft/class_9288, net/minecraft/class_1792 | Java Record，用于不可变参数/状态载体。 |
-| 633 | `class/0633___uFFFD__uFFFD_fj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDjl\u200E` | 配置容器/基础对象 | 11/18 | [I, com/google/gson/JsonObject, [B, [Ljava/lang/String;, net/minecraft/class_243 | 模块与 waypoint 等配置容器的共同基础层。 |
-| 634 | `class/0634__x.class` | `pw/hachimi/client/mixin/x` | `java/lang/Object` | Mixin/Accessor | 0/4 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 635 | `class/0635__s.class` | `pw/hachimi/client/mixin/s` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 636 | `class/0636__q.class` | `pw/hachimi/client/mixin/q` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 637 | `class/0637__m.class` | `pw/hachimi/client/mixin/m` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 638 | `class/0638__j.class` | `pw/hachimi/client/mixin/j` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 639 | `class/0639___uFFFD__uFFFD_de_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDde\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 640 | `class/0640___uFFFD__uFFFD_eF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeF\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/16 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 641 | `class/0641__f.class` | `pw/hachimi/client/mixin/f` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 642 | `class/0642___uFFFD__uFFFD_cB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/13 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 643 | `class/0643___uFFFD__uFFFD_ba_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDba\u200E` | `pw/hachimi/client/\uFFFD\uFFFDrc\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 644 | `class/0644__e.class` | `pw/hachimi/client/mixin/e` | `java/lang/Object` | Mixin/Accessor | 0/4 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 645 | `class/0645__b.class` | `pw/hachimi/client/mixin/b` | `java/lang/Object` | Mixin/Accessor | 0/4 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 646 | `class/0646__c.class` | `pw/hachimi/client/mixin/c` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 647 | `class/0647___uFFFD__uFFFD_js_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjs\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 648 | `class/0648___uFFFD__uFFFD_iP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiP\u200E` | `java/lang/Object` | 命令/参数辅助 | 5/13 | com/mojang/brigadier/arguments/ArgumentType, com/mojang/brigadier/context/CommandContext, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/StringReader, net/minecraft/class_1792 | Brigadier 命令解析、参数或补全辅助。 |
-| 649 | `class/0649___uFFFD__uFFFD_ho_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDho\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/14 | [I, net/minecraft/class_2708, net/minecraft/class_243, net/minecraft/class_634, net/minecraft/class_746 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 650 | `class/0650___uFFFD__uFFFD_fk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDeU\u200E` | 专用辅助类 | 3/8 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 651 | `class/0651___uFFFD__uFFFD_gL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmd\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 652 | `class/0652___uFFFD__uFFFD_dg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdg\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 653 | `class/0653___uFFFD__uFFFD_c_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/9 | net/minecraft/class_2394, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 654 | `class/0654___uFFFD__uFFFD_lw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlw\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/8 | net/minecraft/class_2350, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 655 | `class/0655___uFFFD__uFFFD_mX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 656 | `class/0656___uFFFD__uFFFD_eG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/14 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 657 | `class/0657___uFFFD__uFFFD_df_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdf\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 658 | `class/0658___uFFFD__uFFFD_cC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcC\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/8 | [I, net/minecraft/class_2960, net/minecraft/class_1921, net/minecraft/class_4668$class_5939 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 659 | `class/0659___uFFFD__uFFFD_bb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 42/50 | [I, net/minecraft/class_1299, net/minecraft/class_1297, net/minecraft/class_1542, com/google/common/collect/Lists | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 660 | `class/0660___uFFFD__uFFFD_oY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoY\u200E` | `java/lang/Object` | 工具/管理/数据类 | 13/32 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 661 | `class/0661___uFFFD__uFFFD_nx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 662 | `class/0662___uFFFD__uFFFD_mU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 18/26 | [I, net/minecraft/class_2828, net/minecraft/class_2596, net/minecraft/class_2828$class_2830, net/minecraft/class_4970$class_4971 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 663 | `class/0663___uFFFD__uFFFD_jp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | 专用辅助类 | 11/31 | [I, net/minecraft/class_1799, net/minecraft/class_1792, net/minecraft/class_1293, net/minecraft/class_1844 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 664 | `class/0664___uFFFD__uFFFD_kQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkQ\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 665 | `class/0665___uFFFD__uFFFD_hl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/7 | net/minecraft/class_243, net/minecraft/class_3414, net/minecraft/class_3419, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 666 | `class/0666___uFFFD__uFFFD_iM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 667 | `class/0667___uFFFD__uFFFD_gH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 6/14 | [I, net/minecraft/class_243 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 668 | `class/0668___uFFFD__uFFFD_fg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfg\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 669 | `class/0669___uFFFD__uFFFD_dc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 5/17 | net/minecraft/class_1299, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 670 | `class/0670___uFFFD__uFFFD_eD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2672, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 671 | `class/0671___uFFFD__uFFFD_a_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDa\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/9 | net/minecraft/class_2338, net/minecraft/class_238, [I, net/minecraft/class_4587, net/minecraft/class_243 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 672 | `class/0672___uFFFD__uFFFD_mV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmV\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/22 | net/minecraft/class_2374, net/minecraft/class_2338, [Lnet/minecraft/class_2338;, [I, com/google/common/collect/Lists | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 673 | `class/0673___uFFFD__uFFFD_lu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlu\u200E` | `java/lang/Enum` | 枚举 | 7/9 | net/minecraft/class_1792, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 674 | `class/0674___uFFFD__uFFFD_jq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/25 | net/minecraft/class_2248, [I, net/minecraft/class_2791, net/minecraft/class_2338, net/minecraft/class_2680 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 675 | `class/0675___uFFFD__uFFFD_kR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/9 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 676 | `class/0676___uFFFD__uFFFD_iN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 677 | `class/0677___uFFFD__uFFFD_hm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 678 | `class/0678___uFFFD__uFFFD_fi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2708, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 679 | `class/0679___uFFFD__uFFFD_gJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 680 | `class/0680__T.class` | `pw/hachimi/client/mixin/T` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 681 | `class/0681__R.class` | `pw/hachimi/client/mixin/R` | `java/lang/Object` | Mixin/Accessor | 0/8 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 682 | `class/0682___uFFFD__uFFFD_ny_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDny\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 683 | `class/0683___uFFFD__uFFFD_oZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 13/15 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 684 | `class/0684__S.class` | `pw/hachimi/client/mixin/S` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 685 | `class/0685__Q.class` | `pw/hachimi/client/mixin/Q` | `java/lang/Object` | Mixin/Accessor | 0/3 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 686 | `class/0686__O.class` | `pw/hachimi/client/mixin/O` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 687 | `class/0687__K.class` | `pw/hachimi/client/mixin/K` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 688 | `class/0688___uFFFD__uFFFD_gI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/20 | [I, [B, [Ljava/lang/String;, net/minecraft/class_243, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 689 | `class/0689___uFFFD__uFFFD_fh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1293, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 690 | `class/0690__I.class` | `pw/hachimi/client/mixin/I` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 691 | `class/0691___uFFFD__uFFFD_eE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 692 | `class/0692___uFFFD__uFFFD_dd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdd\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/16 | [I, net/minecraft/class_1309, net/minecraft/class_1657, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 693 | `class/0693__F.class` | `pw/hachimi/client/mixin/F` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 694 | `class/0694___uFFFD__uFFFD_cA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 695 | `class/0695___uFFFD__uFFFD_iS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiS\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/7 | net/minecraft/class_2338, [I, net/minecraft/class_1657, net/minecraft/class_1297 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 696 | `class/0696___uFFFD__uFFFD_hr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 697 | `class/0697___uFFFD__uFFFD_gO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgO\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 698 | `class/0698___uFFFD__uFFFD_fn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfn\u200E` | `java/lang/Record` | 记录数据类 | 10/15 | — | Java Record，用于不可变参数/状态载体。 |
-| 699 | `class/0699___uFFFD__uFFFD_dj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 11/22 | [I, net/minecraft/class_746, net/minecraft/class_6880, [B, [Ljava/lang/String; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 700 | `class/0700___uFFFD__uFFFD_bf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbf\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/11 | net/minecraft/class_6880, [I, net/minecraft/class_1293, net/minecraft/class_1291 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 701 | `class/0701___uFFFD__uFFFD_cG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | 专用辅助类 | 9/15 | [I, net/minecraft/class_2596, net/minecraft/class_2743, net/minecraft/class_2675, net/minecraft/class_2664 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 702 | `class/0702___uFFFD__uFFFD_qc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqc\u200E` | `java/lang/Object` | 工具/管理/数据类 | 7/4 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 703 | `class/0703___uFFFD__uFFFD_lz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDik\u200E` | 专用辅助类 | 1/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 704 | `class/0704___uFFFD__uFFFD_kW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/15 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/Command, com/mojang/brigadier/arguments/StringArgumentType | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 705 | `class/0705___uFFFD__uFFFD_jv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjv\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 706 | `class/0706___uFFFD__uFFFD_aB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaB\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/9 | net/minecraft/class_243, [I, net/minecraft/class_2828$class_5911, net/minecraft/class_2828$class_2829 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 707 | `class/0707___uFFFD__uFFFD_fo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 708 | `class/0708___uFFFD__uFFFD_gP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 709 | `class/0709___uFFFD__uFFFD_eL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeL\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 710 | `class/0710___uFFFD__uFFFD_dk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdk\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/4 | skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 711 | `class/0711___uFFFD__uFFFD_cH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 28/37 | [I, net/minecraft/class_238, net/minecraft/class_1297, net/minecraft/class_1309, net/minecraft/class_1531 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 712 | `class/0712___uFFFD__uFFFD_aD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaD\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 713 | `class/0713___uFFFD__uFFFD_pA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 714 | `class/0714___uFFFD__uFFFD_jw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjw\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 715 | `class/0715___uFFFD__uFFFD_kX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDfh\u200E` | 专用辅助类 | 3/5 | net/minecraft/class_6880, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 716 | `class/0716___uFFFD__uFFFD_iT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 717 | `class/0717___uFFFD__uFFFD_hs_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/21 | [I, net/minecraft/class_243, net/minecraft/class_1297, net/minecraft/class_1671, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 718 | `class/0718___uFFFD__uFFFD_qd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqd\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 719 | `class/0719___uFFFD__uFFFD_aC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 6/3 | net/minecraft/class_1268, net/minecraft/class_1799, net/minecraft/class_4587, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 720 | `class/0720__Checks.class` | `pw/hachimi/satin/Checks` | `java/lang/Object` | 工具/管理/数据类 | 0/5 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 721 | `class/0721___uFFFD__uFFFD_kU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkU\u200E` | `java/lang/Object` | 工具/管理/数据类 | 11/19 | net/minecraft/class_4618, net/minecraft/class_9799, pw/hachimi/satin/ShaderEffectManager, net/minecraft/class_4668$class_4678, com/mojang/blaze3d/systems/RenderSystem | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 722 | `class/0722___uFFFD__uFFFD_hp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 12/18 | [I, net/minecraft/class_6880, net/minecraft/class_1799, net/minecraft/class_1844, net/minecraft/class_1293 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 723 | `class/0723___uFFFD__uFFFD_iQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 724 | `class/0724___uFFFD__uFFFD_fl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 6/13 | net/minecraft/class_332, [I, [Ljava/lang/Enum;, [Ljava/lang/String; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 725 | `class/0725___uFFFD__uFFFD_gM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDhR\u200E` | 专用辅助类 | 2/5 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 726 | `class/0726___uFFFD__uFFFD_eI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 11/12 | [I, net/minecraft/class_2338, net/minecraft/class_243, [Lnet/minecraft/class_2350;, net/minecraft/class_2350 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 727 | `class/0727___uFFFD__uFFFD_dh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 7/16 | [Ljava/lang/Enum;, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 728 | `class/0728___uFFFD__uFFFD_qa_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqa\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/9 | net/minecraft/class_265, net/minecraft/class_2338, net/minecraft/class_2680, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 729 | `class/0729___uFFFD__uFFFD_mY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 3/5 | net/minecraft/class_243, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 730 | `class/0730___uFFFD__uFFFD_lx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlx\u200E` | `java/lang/Object` | 工具/管理/数据类 | 24/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 731 | `class/0731__ManagedUniform.class` | `pw/hachimi/satin/ManagedUniform` | `pw/hachimi/satin/ManagedUniformBase` | 专用辅助类 | 13/19 | pw/hachimi/satin/uniform/Uniform1i, pw/hachimi/satin/uniform/Uniform2i, pw/hachimi/satin/uniform/Uniform3i, pw/hachimi/satin/uniform/Uniform4i, pw/hachimi/satin/uniform/Uniform1f | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 732 | `class/0732___uFFFD__uFFFD_bc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/21 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 733 | `class/0733___uFFFD__uFFFD_cD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 3/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 734 | `class/0734___uFFFD__uFFFD_hq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhq\u200E` | `java/lang/Record` | 记录数据类 | 4/11 | net/minecraft/class_2374 | Java Record，用于不可变参数/状态载体。 |
-| 735 | `class/0735___uFFFD__uFFFD_fm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfm\u200E` | `java/lang/Enum` | 枚举 | 7/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 736 | `class/0736___uFFFD__uFFFD_gN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 737 | `class/0737___uFFFD__uFFFD_eJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/21 | [I, net/minecraft/class_241, net/minecraft/class_638, net/minecraft/class_746, net/minecraft/class_238 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 738 | `class/0738___uFFFD__uFFFD_di_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/18 | [I, net/minecraft/class_1799, net/minecraft/class_746, net/minecraft/class_1757, net/minecraft/class_2708 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 739 | `class/0739___uFFFD__uFFFD_cF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcF\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 740 | `class/0740___uFFFD__uFFFD_be_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbe\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/5 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 741 | `class/0741___uFFFD__uFFFD_qb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 742 | `class/0742___uFFFD__uFFFD_ly_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDly\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 19/27 | [I, net/minecraft/class_1297, net/minecraft/class_2596, net/minecraft/class_1657, net/minecraft/class_1819 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 743 | `class/0743___uFFFD__uFFFD_mZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | `java/lang/Object` | 命令/参数辅助 | 6/16 | com/mojang/brigadier/builder/LiteralArgumentBuilder, [I, [Ljava/lang/String;, com/google/common/collect/Lists, com/mojang/brigadier/builder/RequiredArgumentBuilder | Brigadier 命令解析、参数或补全辅助。 |
-| 744 | `class/0744___uFFFD__uFFFD_ju_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDju\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 745 | `class/0745___uFFFD__uFFFD_kV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | `java/lang/Enum` | 枚举 | 10/16 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 746 | `class/0746___uFFFD__uFFFD_bd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbd\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/19 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 747 | `class/0747___uFFFD__uFFFD_cE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/5 | net/minecraft/class_4587, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 748 | `class/0748___uFFFD__uFFFD_aA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaA\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/16 | [I, net/minecraft/class_2338, net/minecraft/class_1297, net/minecraft/class_746, net/minecraft/class_1268 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 749 | `class/0749___uFFFD__uFFFD_eO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeO\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/13 | [I, net/minecraft/class_2848 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 750 | `class/0750___uFFFD__uFFFD_dn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/34 | [I, [D, net/minecraft/class_243, net/minecraft/class_241, net/minecraft/class_2338 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 751 | `class/0751___uFFFD__uFFFD_cK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcK\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/10 | net/minecraft/class_243, [I, net/minecraft/class_238 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 752 | `class/0752___uFFFD__uFFFD_bj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1041, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 753 | `class/0753___uFFFD__uFFFD_aG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaG\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 754 | `class/0754___uFFFD__uFFFD_I_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDhE\u200E` | 专用辅助类 | 1/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 755 | `class/0755___uFFFD__uFFFD_jz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/arguments/StringArgumentType, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 756 | `class/0756___uFFFD__uFFFD_hv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhv\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 26/40 | [I, net/minecraft/class_418, net/minecraft/class_2828, net/minecraft/class_2596, net/minecraft/class_2708 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 757 | `class/0757___uFFFD__uFFFD_iW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/6 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 758 | `class/0758___uFFFD__uFFFD_fr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 6/13 | net/minecraft/class_1313, net/minecraft/class_243, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 759 | `class/0759___uFFFD__uFFFD_qg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 760 | `class/0760___uFFFD__uFFFD_pD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpD\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 761 | `class/0761___uFFFD__uFFFD_oc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoc\u200E` | `java/lang/Enum` | 枚举 | 9/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 762 | `class/0762___uFFFD__uFFFD_cL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcL\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 763 | `class/0763___uFFFD__uFFFD_bk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 3/5 | net/minecraft/class_332, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 764 | `class/0764___uFFFD__uFFFD_aH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaH\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 765 | `class/0765___uFFFD__uFFFD_J_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 766 | `class/0766___uFFFD__uFFFD_hw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhw\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/24 | [I, net/minecraft/class_310, net/minecraft/class_2664, net/minecraft/class_2596, net/minecraft/class_2663 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 767 | `class/0767___uFFFD__uFFFD_iX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDhR\u200E` | 专用辅助类 | 2/8 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 768 | `class/0768___uFFFD__uFFFD_fs_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2818, [I, net/minecraft/class_2338 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 769 | `class/0769___uFFFD__uFFFD_gT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/29 | [I, net/minecraft/class_1657, net/minecraft/class_1293, net/minecraft/class_2663, net/minecraft/class_2596 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 770 | `class/0770___uFFFD__uFFFD_do_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 13/23 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `BetterChatModule`（高置信度）。 |
-| 771 | `class/0771___uFFFD__uFFFD_eP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 772 | `class/0772___uFFFD__uFFFD_qh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 773 | `class/0773___uFFFD__uFFFD_od_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDod\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/21 | net/minecraft/class_2338, net/minecraft/class_638, [I, net/minecraft/class_631, net/minecraft/class_1297 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 774 | `class/0774__ResettableManagedShaderBase.class` | `pw/hachimi/satin/ResettableManagedShaderBase` | `java/lang/Object` | 工具/管理/数据类 | 6/34 | pw/hachimi/satin/uniform/UniformFinder, net/minecraft/class_310, net/minecraft/class_1041, pw/hachimi/satin/ManagedUniformBase, com/mojang/logging/LogUtils | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 775 | `class/0775___uFFFD__uFFFD_nA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnA\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 776 | `class/0776___uFFFD__uFFFD_gQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgQ\u200E` | `java/util/HashSet` | 专用辅助类 | 4/4 | net/minecraft/class_2338, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 777 | `class/0777___uFFFD__uFFFD_fp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 778 | `class/0778__bf.class` | `pw/hachimi/client/mixin/bf` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 779 | `class/0779___uFFFD__uFFFD_dl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdl\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 780 | `class/0780___uFFFD__uFFFD_eM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/14 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 781 | `class/0781__be.class` | `pw/hachimi/client/mixin/be` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 782 | `class/0782___uFFFD__uFFFD_cI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | 专用辅助类 | 5/11 | com/google/gson/JsonArray, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 783 | `class/0783__bb.class` | `pw/hachimi/client/mixin/bb` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 784 | `class/0784___uFFFD__uFFFD_bh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbh\u200E` | `java/lang/Enum` | 枚举 | 6/19 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 785 | `class/0785__bc.class` | `pw/hachimi/client/mixin/bc` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 786 | `class/0786___uFFFD__uFFFD_aE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 787 | `class/0787__ba.class` | `pw/hachimi/client/mixin/ba` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 788 | `class/0788__bn.class` | `pw/hachimi/client/mixin/bn` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 789 | `class/0789___uFFFD__uFFFD_oa_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoa\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/7 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 790 | `class/0790___uFFFD__uFFFD_pB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 791 | `class/0791___uFFFD__uFFFD_G_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDG\u200E` | `java/lang/Object` | 工具/管理/数据类 | 7/7 | net/minecraft/class_2338, [I, net/minecraft/class_238 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 792 | `class/0792___uFFFD__uFFFD_jx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 793 | `class/0793___uFFFD__uFFFD_kY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 12/14 | [I, net/minecraft/class_241, net/minecraft/class_1770, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 794 | `class/0794__bk.class` | `pw/hachimi/client/mixin/bk` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 795 | `class/0795__bh.class` | `pw/hachimi/client/mixin/bh` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 796 | `class/0796___uFFFD__uFFFD_ht_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDht\u200E` | `java/lang/Enum` | 枚举 | 7/11 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 797 | `class/0797___uFFFD__uFFFD_iU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/11 | [I, net/minecraft/class_1297, net/minecraft/class_1501, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 798 | `class/0798__bi.class` | `pw/hachimi/client/mixin/bi` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 799 | `class/0799__br.class` | `pw/hachimi/client/mixin/br` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 800 | `class/0800__bs.class` | `pw/hachimi/client/mixin/bs` | `java/lang/Object` | Mixin/Accessor | 0/3 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 801 | `class/0801___uFFFD__uFFFD_qe_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqe\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 27/49 | [I, net/minecraft/class_746, net/minecraft/class_243, net/minecraft/class_238, net/minecraft/class_2338 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 802 | `class/0802__ae.class` | `pw/hachimi/client/mixin/ae` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 803 | `class/0803___uFFFD__uFFFD_dm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/10 | [I, net/minecraft/class_2828, net/minecraft/class_2848, net/minecraft/class_2596, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 804 | `class/0804___uFFFD__uFFFD_eN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeN\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/10 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 805 | `class/0805__bD.class` | `pw/hachimi/client/mixin/bD` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 806 | `class/0806__ad.class` | `pw/hachimi/client/mixin/ad` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 807 | `class/0807___uFFFD__uFFFD_bi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbi\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/1 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 808 | `class/0808___uFFFD__uFFFD_cJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcJ\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 809 | `class/0809__bB.class` | `pw/hachimi/client/mixin/bB` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 810 | `class/0810___uFFFD__uFFFD_aF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 25/23 | [I, net/minecraft/class_238, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 811 | `class/0811__ab.class` | `pw/hachimi/client/mixin/ab` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 812 | `class/0812__bN.class` | `pw/hachimi/client/mixin/bN` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 813 | `class/0813__an.class` | `pw/hachimi/client/mixin/an` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 814 | `class/0814__bO.class` | `pw/hachimi/client/mixin/bO` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 815 | `class/0815___uFFFD__uFFFD_H_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDH\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/4 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 816 | `class/0816__al.class` | `pw/hachimi/client/mixin/al` | `java/lang/Object` | Mixin/Accessor | 0/1 | net/minecraft/class_286 | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 817 | `class/0817___uFFFD__uFFFD_kZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | 专用辅助类 | 5/11 | com/google/gson/JsonObject, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 818 | `class/0818___uFFFD__uFFFD_jy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 819 | `class/0819__bK.class` | `pw/hachimi/client/mixin/bK` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 820 | `class/0820___uFFFD__uFFFD_hu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 6/21 | [I, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/builder/ArgumentBuilder, com/mojang/brigadier/Command, com/mojang/brigadier/builder/RequiredArgumentBuilder | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 821 | `class/0821___uFFFD__uFFFD_iV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiV\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/55 | net/minecraft/class_1657, [I, net/minecraft/class_243, net/minecraft/class_238, net/minecraft/class_746 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 822 | `class/0822__ah.class` | `pw/hachimi/client/mixin/ah` | `java/lang/Object` | Mixin/Accessor | 0/3 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 823 | `class/0823___uFFFD__uFFFD_gR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 824 | `class/0824__bT.class` | `pw/hachimi/client/mixin/bT` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 825 | `class/0825___uFFFD__uFFFD_qf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqf\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/12 | [I, net/minecraft/class_2735, net/minecraft/class_2596, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 826 | `class/0826__ar.class` | `pw/hachimi/client/mixin/ar` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 827 | `class/0827___uFFFD__uFFFD_ob_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDob\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 828 | `class/0828___uFFFD__uFFFD_pC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 829 | `class/0829__ap.class` | `pw/hachimi/client/mixin/ap` | `java/lang/Object` | Mixin/Accessor | 0/2 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 830 | `class/0830__az.class` | `pw/hachimi/client/mixin/az` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 831 | `class/0831__aw.class` | `pw/hachimi/client/mixin/aw` | `java/lang/Object` | Mixin/Accessor | 0/1 | — | Minecraft Mixin 注入或 accessor/invoker 桥接类。 |
-| 832 | `class/0832___uFFFD__uFFFD_aK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaK\u200E` | `java/lang/Object` | 工具/管理/数据类 | 0/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 833 | `class/0833___uFFFD__uFFFD_hz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/8 | net/minecraft/class_303$class_7590, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 834 | `class/0834___uFFFD__uFFFD_gW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgW\u200E` | `java/lang/Enum` | 枚举 | 9/10 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 835 | `class/0835___uFFFD__uFFFD_fv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfv\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 836 | `class/0836___uFFFD__uFFFD_eS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeS\u200E` | `java/lang/Enum` | 枚举 | 3/8 | [B, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 837 | `class/0837___uFFFD__uFFFD_dr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 8/10 | net/minecraft/class_332, net/minecraft/class_2960, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 838 | `class/0838___uFFFD__uFFFD_E_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 839 | `class/0839___uFFFD__uFFFD_bn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 840 | `class/0840___uFFFD__uFFFD_cO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 841 | `class/0841___uFFFD__uFFFD_qk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 25/22 | [I, net/minecraft/class_2248, net/minecraft/class_2338, net/minecraft/class_2399, net/minecraft/class_5892 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 842 | `class/0842___uFFFD__uFFFD_og_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDog\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 843 | `class/0843___uFFFD__uFFFD_pH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpH\u200E` | `java/lang/Object` | 工具/管理/数据类 | 11/22 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 844 | `class/0844___uFFFD__uFFFD_nD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/6 | net/minecraft/class_2561, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 845 | `class/0845___uFFFD__uFFFD_mc_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmc\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 846 | `class/0846___uFFFD__uFFFD_gX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgX\u200E` | `java/lang/Object` | 工具/管理/数据类 | 11/13 | net/minecraft/class_2561, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 847 | `class/0847___uFFFD__uFFFD_fw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfw\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 848 | `class/0848___uFFFD__uFFFD_eT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeT\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 849 | `class/0849___uFFFD__uFFFD_ds_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDds\u200E` | `pw/hachimi/client/\uFFFD\uFFFDjH\u200E` | 专用辅助类 | 1/11 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 850 | `class/0850___uFFFD__uFFFD_bo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbo\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 851 | `class/0851___uFFFD__uFFFD_cP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcP\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 852 | `class/0852___uFFFD__uFFFD_F_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 5/16 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 853 | `class/0853___uFFFD__uFFFD_aL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaL\u200E` | `net/minecraft/class_743` | Minecraft 扩展类 | 4/6 | net/minecraft/class_315, [I, net/minecraft/class_241 | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 854 | `class/0854___uFFFD__uFFFD_oh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDhR\u200E` | 专用辅助类 | 3/10 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 855 | `class/0855___uFFFD__uFFFD_pI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpI\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/9 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 856 | `class/0856___uFFFD__uFFFD_md_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmd\u200E` | `java/lang/Enum` | 枚举 | 6/12 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 857 | `class/0857___uFFFD__uFFFD_lA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlA\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 858 | `class/0858___uFFFD__uFFFD_ql_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDql\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/13 | [I, net/minecraft/class_1297, net/minecraft/class_243, net/minecraft/class_1657, net/minecraft/class_1684 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 859 | `class/0859___uFFFD__uFFFD_cM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDrc\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 860 | `class/0860___uFFFD__uFFFD_bl_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbl\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 861 | `class/0861___uFFFD__uFFFD_hx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 19/37 | [I, net/minecraft/class_1799, net/minecraft/class_1747, net/minecraft/class_2338, net/minecraft/class_2350 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 862 | `class/0862___uFFFD__uFFFD_iY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 863 | `class/0863___uFFFD__uFFFD_ft_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDft\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | 专用辅助类 | 5/13 | com/google/gson/JsonArray, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 864 | `class/0864___uFFFD__uFFFD_gU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 865 | `class/0865___uFFFD__uFFFD_C_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 866 | `class/0866___uFFFD__uFFFD_dp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 867 | `class/0867___uFFFD__uFFFD_eQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeQ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/17 | [I, net/minecraft/class_2761, com/google/common/collect/Lists | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 868 | `class/0868___uFFFD__uFFFD_qi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 17/29 | [I, net/minecraft/class_2668, net/minecraft/class_2596, net/minecraft/class_2761, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 869 | `class/0869___uFFFD__uFFFD_pF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpF\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 870 | `class/0870___uFFFD__uFFFD_ma_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDma\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 871 | `class/0871___uFFFD__uFFFD_nB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnB\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 872 | `class/0872___uFFFD__uFFFD_aJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaJ\u200E` | `java/lang/Enum` | 枚举 | 5/10 | [I, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 873 | `class/0873___uFFFD__uFFFD_hy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhy\u200E` | `java/lang/Object` | 工具/管理/数据类 | 8/15 | net/minecraft/class_243, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 874 | `class/0874___uFFFD__uFFFD_iZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDiZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 11/21 | org/apache/logging/log4j/Logger, net/minecraft/class_310, [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 875 | `class/0875___uFFFD__uFFFD_fu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfu\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 876 | `class/0876___uFFFD__uFFFD_dq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdq\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 14/22 | [I, net/minecraft/class_1799, net/minecraft/class_1092, net/minecraft/class_2960, net/minecraft/class_1792 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 877 | `class/0877___uFFFD__uFFFD_eR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 121/199 | [I, net/minecraft/class_1297, net/minecraft/class_243, net/minecraft/class_2338, net/minecraft/class_1309 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 878 | `class/0878___uFFFD__uFFFD_cN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpf\u200E` | 专用辅助类 | 6/10 | [I, com/google/gson/JsonObject, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 879 | `class/0879___uFFFD__uFFFD_D_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDD\u200E` | `java/lang/Enum` | 枚举 | 6/9 | net/minecraft/class_5321, [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 880 | `class/0880___uFFFD__uFFFD_bm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 5/11 | net/minecraft/class_332, net/minecraft/class_2561, [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 881 | `class/0881___uFFFD__uFFFD_qj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgk\u200E` | 专用辅助类 | 6/7 | net/minecraft/class_1657, [I, net/minecraft/class_243, [B, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 882 | `class/0882___uFFFD__uFFFD_pG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/34 | [I, net/minecraft/class_243, net/minecraft/class_746, net/minecraft/class_1297, net/minecraft/class_1671 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 883 | `class/0883___uFFFD__uFFFD_of_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDof\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 17/29 | [I, net/minecraft/class_1792, net/minecraft/class_1799, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 884 | `class/0884___uFFFD__uFFFD_nC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/14 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/Command, [I, com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 885 | `class/0885___uFFFD__uFFFD_mb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmb\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 886 | `class/0886___uFFFD__uFFFD_dv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdv\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 887 | `class/0887___uFFFD__uFFFD_eW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeW\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/46 | net/minecraft/class_1297, net/minecraft/class_243, [I, net/minecraft/class_238, net/minecraft/class_2338 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 888 | `class/0888___uFFFD__uFFFD_br_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/39 | [I, net/minecraft/class_243, [F, net/minecraft/class_239, net/minecraft/class_241 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 889 | `class/0889___uFFFD__uFFFD_cS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcS\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/6 | [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 890 | `class/0890___uFFFD__uFFFD_aO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaO\u200E` | `net/minecraft/class_437` | GUI/Screen | 13/35 | [I, net/minecraft/class_2561, net/minecraft/class_332, pw/hachimi/satin/ManagedShaderEffect, com/mojang/blaze3d/systems/RenderSystem | Minecraft Screen/GUI 相关界面或界面辅助。 |
-| 891 | `class/0891___uFFFD__uFFFD_mg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 53/56 | [I, net/minecraft/class_2338, net/minecraft/class_2680, net/minecraft/class_2350, net/minecraft/class_4969 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 892 | `class/0892___uFFFD__uFFFD_Q_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 893 | `class/0893___uFFFD__uFFFD_nH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnH\u200E` | `java/lang/Object` | 工具/管理/数据类 | 10/21 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 894 | `class/0894___uFFFD__uFFFD_lD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlD\u200E` | `pw/hachimi/client/\uFFFD\uFFFDfj\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 895 | `class/0895___uFFFD__uFFFD_fz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpB\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 896 | `class/0896___uFFFD__uFFFD_qo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqo\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 897 | `class/0897___uFFFD__uFFFD_pL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpL\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 898 | `class/0898___uFFFD__uFFFD_ok_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDok\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/20 | [I, net/minecraft/class_6880, net/minecraft/class_746, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 899 | `class/0899___uFFFD__uFFFD_cT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcT\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 900 | `class/0900___uFFFD__uFFFD_bs_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/12 | com/mojang/brigadier/builder/RequiredArgumentBuilder, com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 901 | `class/0901___uFFFD__uFFFD_aP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/9 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, [B, [Ljava/lang/String;, net/minecraft/class_1799 | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 902 | `class/0902___uFFFD__uFFFD_R_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/14 | [I, net/minecraft/class_2663, net/minecraft/class_2596, net/minecraft/class_1297, net/minecraft/class_1747 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 903 | `class/0903___uFFFD__uFFFD_lE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 8/14 | [I, net/minecraft/class_2248, net/minecraft/class_2338, net/minecraft/class_2680, net/minecraft/class_2885 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 904 | `class/0904___uFFFD__uFFFD_kd_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkd\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 905 | `class/0905___uFFFD__uFFFD_jA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjA\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/10 | [I, net/minecraft/class_2739, net/minecraft/class_2596, net/minecraft/class_1297, net/minecraft/class_2945$class_7834 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 906 | `class/0906___uFFFD__uFFFD_dw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdw\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/6 | net/minecraft/class_1309, [I, net/minecraft/class_243 | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 907 | `class/0907___uFFFD__uFFFD_eX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDin\u200E` | 专用辅助类 | 9/20 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 908 | `class/0908___uFFFD__uFFFD_qp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDiG\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 909 | `class/0909___uFFFD__uFFFD_ol_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDol\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 19/10 | [I, net/minecraft/class_2886, net/minecraft/class_2824, net/minecraft/class_2828, net/minecraft/class_2827 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 910 | `class/0910___uFFFD__uFFFD_pM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 911 | `class/0911___uFFFD__uFFFD_mh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_2338, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 912 | `class/0912___uFFFD__uFFFD_nI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 913 | `class/0913__ManagedShaderEffect.class` | `pw/hachimi/satin/ManagedShaderEffect` | `java/lang/Object` | 工具/管理/数据类 | 0/12 | pw/hachimi/satin/uniform/UniformFinder | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 914 | `class/0914___uFFFD__uFFFD_gY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgY\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 4/9 | [I, net/minecraft/class_2586, net/minecraft/class_2595, net/minecraft/class_2680, net/minecraft/class_2754 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 915 | `class/0915___uFFFD__uFFFD_fx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 17/32 | [I, net/minecraft/class_2586, net/minecraft/class_2627, net/minecraft/class_2338, net/minecraft/class_2350 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 916 | `class/0916___uFFFD__uFFFD_dt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdt\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | 专用辅助类 | 5/11 | skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 917 | `class/0917___uFFFD__uFFFD_eU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeU\u200E` | `java/lang/Object` | 工具/管理/数据类 | 6/35 | net/minecraft/class_332, [I, org/joml/Matrix4f, com/mojang/blaze3d/systems/RenderSystem, net/minecraft/class_757 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 918 | `class/0918___uFFFD__uFFFD_bp_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbp\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/15 | [I, [Ljava/lang/String;, com/mojang/authlib/GameProfile, [C, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 919 | `class/0919___uFFFD__uFFFD_aM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 5/9 | [Ljava/lang/Object;, [B, [Ljava/lang/String;, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 920 | `class/0920___uFFFD__uFFFD_pJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/10 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 921 | `class/0921___uFFFD__uFFFD_oi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 8/13 | [I, net/minecraft/class_1293, net/minecraft/class_1799, net/minecraft/class_1291, net/minecraft/class_9323 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 922 | `class/0922___uFFFD__uFFFD_me_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDme\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 15/15 | net/minecraft/class_332, [I, net/minecraft/class_3545, net/minecraft/class_1657, net/minecraft/class_1293 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 923 | `class/0923___uFFFD__uFFFD_nF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnF\u200E` | `pw/hachimi/client/\uFFFD\uFFFDaU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 924 | `class/0924___uFFFD__uFFFD_ka_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDka\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 4/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 925 | `class/0925___uFFFD__uFFFD_lB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmZ\u200E` | 命令类 | 5/11 | com/mojang/brigadier/builder/LiteralArgumentBuilder, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/context/CommandContext, [I, [B | 直接继承 Command 层，使用 Brigadier 构建客户端命令。 |
-| 926 | `class/0926___uFFFD__uFFFD_qm_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqm\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 22/31 | [I, net/minecraft/class_2248, net/minecraft/class_2350, [F, net/minecraft/class_243 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 927 | `class/0927___uFFFD__uFFFD_du_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpU\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 928 | `class/0928___uFFFD__uFFFD_bq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbq\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/2 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 929 | `class/0929___uFFFD__uFFFD_cR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDrc\u200E` | 专用辅助类 | 1/5 | net/minecraft/class_2879 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 930 | `class/0930___uFFFD__uFFFD_aN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaN\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 931 | `class/0931___uFFFD__uFFFD_mf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmf\u200E` | `java/lang/Record` | 记录数据类 | 6/11 | — | Java Record，用于不可变参数/状态载体。 |
-| 932 | `class/0932___uFFFD__uFFFD_nG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnG\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 933 | `class/0933___uFFFD__uFFFD_lC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/4 | net/minecraft/class_1309, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 934 | `class/0934___uFFFD__uFFFD_P_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDP\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 935 | `class/0935___uFFFD__uFFFD_kb_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | `pw/hachimi/client/\uFFFD\uFFFDot\u200E` | 专用辅助类 | 6/22 | [I, net/minecraft/class_1657, net/minecraft/class_742, net/minecraft/class_746, [B | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 936 | `class/0936___uFFFD__uFFFD_fy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDfy\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 5/8 | net/minecraft/class_243, net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 937 | `class/0937___uFFFD__uFFFD_gZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDgZ\u200E` | `java/lang/Object` | 工具/管理/数据类 | 7/20 | [Lpw/hachimi/client/\uFFFD\uFFFDad\u200E;, [I, [Ljava/lang/reflect/Method;, pw/hachimi/eventbus/annotation/EventListener, [Ljava/lang/Object; | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 938 | `class/0938___uFFFD__uFFFD_qn_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqn\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/13 | [I, net/minecraft/class_3414, [B, [Ljava/lang/String;, [C | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 939 | `class/0939___uFFFD__uFFFD_oj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 16/22 | [I, net/minecraft/class_1297, net/minecraft/class_1501, net/minecraft/class_2596, net/minecraft/class_746 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 940 | `class/0940___uFFFD__uFFFD_pK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpK\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 941 | `class/0941___uFFFD__uFFFD_qt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqt\u200E` | `java/lang/Object` | 框架基础类 | 12/29 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 基础/管理类；被 9 个类直接继承。 |
-| 942 | `class/0942___uFFFD__uFFFD_aS_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaS\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/3 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 943 | `class/0943___uFFFD__uFFFD_jD_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjD\u200E` | `java/lang/Enum` | 枚举 | 11/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 944 | `class/0944___uFFFD__uFFFD_ic_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDic\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/9 | net/minecraft/class_2765, net/minecraft/class_2767, net/minecraft/class_2596, [I, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 945 | `class/0945___uFFFD__uFFFD_dz_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdz\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 946 | `class/0946___uFFFD__uFFFD_M_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDM\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 947 | `class/0947___uFFFD__uFFFD_bv_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbv\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 948 | `class/0948___uFFFD__uFFFD_cW_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcW\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 949 | `class/0949___uFFFD__uFFFD_qs_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqs\u200E` | `pw/hachimi/client/\uFFFD\uFFFDqL\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 950 | `class/0950___uFFFD__uFFFD_oo_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDoo\u200E` | `net/minecraft/class_1676` | Minecraft 扩展类 | 3/8 | [I, net/minecraft/class_310, net/minecraft/class_239, net/minecraft/class_243, net/minecraft/class_1667 | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 951 | `class/0951___uFFFD__uFFFD_pP_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpP\u200E` | `net/minecraft/class_276` | Minecraft 扩展类 | 2/4 | [I, com/mojang/blaze3d/systems/RenderSystem | 直接扩展 Minecraft 类，实现界面、渲染或游戏对象行为。 |
-| 952 | `class/0952___uFFFD__uFFFD_mk_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmk\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 953 | `class/0953___uFFFD__uFFFD_nL_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnL\u200E` | `java/lang/Record` | 记录数据类 | 8/13 | — | Java Record，用于不可变参数/状态载体。 |
-| 954 | `class/0954__ManagedUniformBase.class` | `pw/hachimi/satin/ManagedUniformBase` | `java/lang/Object` | 工具/管理/数据类 | 1/6 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 955 | `class/0955___uFFFD__uFFFD_lH_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlH\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/14 | [I, skidonion/vLZkx/___, skidonion/vLZkx/___/____, [B, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 956 | `class/0956___uFFFD__uFFFD_kg_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkg\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 957 | `class/0957___uFFFD__uFFFD_qu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqu\u200E` | `java/lang/Enum` | 枚举 | 6/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 958 | `class/0958___uFFFD__uFFFD_hA_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDhA\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/10 | [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 959 | `class/0959___uFFFD__uFFFD_cX_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcX\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgl\u200E` | 专用辅助类 | 5/15 | net/minecraft/class_332, [I, [B, [Ljava/lang/String;, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 960 | `class/0960___uFFFD__uFFFD_bw_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbw\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 961 | `class/0961___uFFFD__uFFFD_N_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDN\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 21/30 | [I, net/minecraft/class_2596, net/minecraft/class_2743, net/minecraft/class_2664, net/minecraft/class_8042 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 962 | `class/0962___uFFFD__uFFFD_aT_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaT\u200E` | `java/lang/Object` | 工具/管理/数据类 | 1/7 | baritone/api/BaritoneAPI, baritone/api/IBaritoneProvider, baritone/api/IBaritone, baritone/api/behavior/IPathingBehavior, baritone/api/pathing/goals/GoalBlock | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 963 | `class/0963___uFFFD__uFFFD_pQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpQ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 964 | `class/0964__UniformFinder.class` | `pw/hachimi/satin/uniform/UniformFinder` | `java/lang/Object` | 工具/管理/数据类 | 0/11 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 965 | `class/0965___uFFFD__uFFFD_ml_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDml\u200E` | `java/lang/Record` | 记录数据类 | 3/8 | — | Java Record，用于不可变参数/状态载体。 |
-| 966 | `class/0966___uFFFD__uFFFD_nM_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnM\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 56/68 | [I, pw/hachimi/satin/ManagedShaderEffect, com/mojang/blaze3d/platform/GlStateManager, net/minecraft/class_1657, net/minecraft/class_1511 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 对应 Shoreline `ShadersModule`（高置信度）。 |
-| 967 | `class/0967___uFFFD__uFFFD_kh_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkh\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 17/22 | [I, net/minecraft/class_332, [B, [Ljava/lang/String;, [J | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 968 | `class/0968___uFFFD__uFFFD_lI_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlI\u200E` | `pw/hachimi/client/\uFFFD\uFFFDiQ\u200E` | 专用辅助类 | 2/3 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 969 | `class/0969___uFFFD__uFFFD_id_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDid\u200E` | `pw/hachimi/client/\uFFFD\uFFFDmQ\u200E` | 专用辅助类 | 13/14 | net/minecraft/class_332, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 970 | `class/0970___uFFFD__uFFFD_jE_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjE\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/14 | [I, net/minecraft/class_1297, net/minecraft/class_1671, skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 971 | `class/0971___uFFFD__uFFFD_bt_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbt\u200E` | `java/lang/Object` | 工具/管理/数据类 | 4/5 | net/minecraft/class_2338, net/minecraft/class_2248, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 972 | `class/0972___uFFFD__uFFFD_cU_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcU\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 4/7 | net/minecraft/class_2248, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 973 | `class/0973___uFFFD__uFFFD_aQ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaQ\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 974 | `class/0974___uFFFD__uFFFD_ke_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDke\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/13 | [I, net/minecraft/class_1702, net/minecraft/class_1799, net/minecraft/class_4174, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 975 | `class/0975___uFFFD__uFFFD_lF_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlF\u200E` | `java/lang/Enum` | 枚举 | 4/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 976 | `class/0976___uFFFD__uFFFD_ia_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDia\u200E` | `java/lang/Object` | 工具/管理/数据类 | 3/7 | net/minecraft/class_8030, [B, [C | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 977 | `class/0977___uFFFD__uFFFD_jB_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjB\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/19 | [I, net/minecraft/class_1799, net/minecraft/class_2846, net/minecraft/class_2596, [B | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 978 | `class/0978___uFFFD__uFFFD_dx_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdx\u200E` | `pw/hachimi/client/\uFFFD\uFFFDpU\u200E` | 专用辅助类 | 3/5 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 979 | `class/0979___uFFFD__uFFFD_eY_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeY\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/10 | net/minecraft/class_276, pw/hachimi/satin/ManagedShaderEffect, [I, com/mojang/blaze3d/platform/GlStateManager, [B | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 980 | `class/0980___uFFFD__uFFFD_K_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDK\u200E` | `java/lang/Enum` | 枚举 | 5/8 | [B, [Ljava/lang/String;, [C | 枚举常量/模式选择；大量枚举被混淆器改名。 |
-| 981 | `class/0981___uFFFD__uFFFD_qq_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqq\u200E` | `java/util/concurrent/ConcurrentLinkedDeque` | 专用辅助类 | 3/7 | [I | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 982 | `class/0982___uFFFD__uFFFD_pN_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpN\u200E` | `java/lang/Object` | 工具/管理/数据类 | 5/11 | [I, net/minecraft/class_238, net/minecraft/class_2338, net/minecraft/class_4587, net/minecraft/class_243 | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 983 | `class/0983___uFFFD__uFFFD_om_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDom\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 10/20 | [I, net/minecraft/class_476, net/minecraft/class_495, net/minecraft/class_490, net/minecraft/class_746 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 984 | `class/0984___uFFFD__uFFFD_mi_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmi\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 3/5 | net/minecraft/class_1297, [I | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 985 | `class/0985___uFFFD__uFFFD_nJ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnJ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/10 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 986 | `class/0986___uFFFD__uFFFD_aR_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDaR\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkV\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 987 | `class/0987___uFFFD__uFFFD_ib_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDib\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 21/21 | [I, net/minecraft/class_2663, net/minecraft/class_1657, net/minecraft/class_1297, net/minecraft/class_2596 | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 988 | `class/0988___uFFFD__uFFFD_jC_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDjC\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 7/11 | [I, net/minecraft/class_7438, net/minecraft/class_2596, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 989 | `class/0989___uFFFD__uFFFD_dy_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDdy\u200E` | `java/lang/Object` | 工具/管理/数据类 | 2/17 | net/minecraft/class_243, [F, [I | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 990 | `class/0990___uFFFD__uFFFD_eZ_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDeZ\u200E` | `pw/hachimi/client/\uFFFD\uFFFDlQ\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 991 | `class/0991___uFFFD__uFFFD_cV_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDcV\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 992 | `class/0992___uFFFD__uFFFD_L_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDL\u200E` | `java/lang/Record` | 记录数据类 | 5/10 | — | Java Record，用于不可变参数/状态载体。 |
-| 993 | `class/0993___uFFFD__uFFFD_bu_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDbu\u200E` | `pw/hachimi/client/\uFFFD\uFFFDnZ\u200E` | 事件类 | 2/3 | — | 直接继承混淆后的 Event 层；用于事件总线传递状态/参数。 |
-| 994 | `class/0994___uFFFD__uFFFD_qr_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDqr\u200E` | `pw/hachimi/client/\uFFFD\uFFFDgr\u200E` | 专用辅助类 | 5/9 | [Ljava/lang/Object;, [B, [Ljava/lang/String;, [C | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 995 | `class/0995___uFFFD__uFFFD_on_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDon\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 5/8 | [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 996 | `class/0996___uFFFD__uFFFD_pO_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDpO\u200E` | `pw/hachimi/client/\uFFFD\uFFFDkb\u200E` | 专用辅助类 | 23/32 | [I, net/minecraft/class_2248, net/minecraft/class_243, net/minecraft/class_2338$class_2339, net/minecraft/class_238 | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 997 | `class/0997___uFFFD__uFFFD_nK_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDnK\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 6/10 | [I, net/minecraft/class_746, net/minecraft/class_638, [B, [Ljava/lang/String; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 998 | `class/0998___uFFFD__uFFFD_mj_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDmj\u200E` | `pw/hachimi/client/\uFFFD\uFFFDow\u200E` | 专用辅助类 | 1/4 | — | 继承项目内部基础类，为模块、事件、渲染、配置或管理逻辑提供专用实现。 |
-| 999 | `class/0999___uFFFD__uFFFD_lG_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDlG\u200E` | `pw/hachimi/client/\uFFFD\uFFFDre\u200E` | 功能模块 | 9/12 | [I, [B, [Ljava/lang/String;, [C, [Ljava/lang/Object; | 直接继承混淆后的 ToggleModule 层；负责一个可开关客户端功能。 |
-| 1000 | `class/1000___uFFFD__uFFFD_kf_u200E_.class` | `pw/hachimi/client/\uFFFD\uFFFDkf\u200E` | `java/lang/Object` | 命令/参数辅助 | 4/12 | com/mojang/brigadier/arguments/ArgumentType, com/mojang/brigadier/context/CommandContext, com/mojang/brigadier/exceptions/CommandSyntaxException, com/mojang/brigadier/StringReader, [I | Brigadier 命令解析、参数或补全辅助。 |
-| 1001 | `class/1001__111.class` | `skidonion/vLZkx/111` | `java/lang/Object` | 工具/管理/数据类 | 0/4 | skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 1002 | `class/1002______.class` | `skidonion/vLZkx/___/____` | `java/lang/Object` | 工具/管理/数据类 | 0/108 | — | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 1003 | `class/1003_____.class` | `skidonion/vLZkx/___` | `java/lang/Object` | 工具/管理/数据类 | 0/4 | [B, pw/hachimi/local/NativeBridge | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
-| 1004 | `class/1004__1lI.class` | `skidonion/vLZkx/1lI` | `java/lang/Object` | 工具/管理/数据类 | 1/5 | skidonion/vLZkx/___, skidonion/vLZkx/___/____ | 普通基础类；结合字段、方法及 Minecraft 引用提供工具、管理或数据职责。 |
+- `class_874` / `\u0000re\u200E`：模块系统核心。构造器包含模块名称/描述/类别等形态的参数，并持有多个 `qt` Setting；其下直接继承约 146 个类，是主要功能模块族。
+- `class_919` / `\u0000nZ\u200E`：事件基础对象。其下约 149 个事件子类；很多事件只携带一个 Minecraft 对象或少量 primitive 状态。
+- `class_883` / `\u0000mZ\u200E`：命令基类，直接调用 Brigadier 的 `LiteralArgumentBuilder` / `RequiredArgumentBuilder` / suggestion API。
+- `class_908` / `\u0000qt\u200E`：Setting/配置项基础对象，含 name/value/default/supplier，并具备 Gson JSON 读写接口。
+- `class_910` / `\u0000jl\u200E`：配置项容器/注册表，维护 `qt` 集合并进行 JSON 导入导出。
+- `class_872` / `\u0000nH\u200E`：带 `Runnable` 的动作型 Setting，形态接近按钮/执行动作配置。
 
-## 使用说明
+### 3.2 混淆运行时
 
-- `class/` 中共有 1005 个文件，编号与 README 表格 `#` 对应。
-- 文件名前缀编号是为了绕过原 JAR 的“重复目录名 + 乱码/控制字符”隐藏技巧；class 二进制内容未修改。
-- 若要继续在 JADX/CFR/JByteMod 中研究，建议以 README 的 `内部名` 和 SHA-256 为定位依据，不要仅依赖文件名。
-- Shoreline 对照基于用户上传源码版本（Minecraft 1.21.1 / Yarn 1.21.1+build.3）。fork 新增、删除或重写模块时，未确认项不能视为一对一原版映射。
+- `pw.hachimi.client.ac/ad/ae/af` 构成一组明显的保护运行时。`ae` 负责 64-bit 状态/密钥派生，`af` 负责反射字段/方法解析、CallSite/MethodHandle 与动态字符串解密。
+- 大量业务 class 自带 `DES/CBC/PKCS5Padding`、`ISO-8859-1`、`MutableCallSite`，说明原始模块名称、描述、部分常量并不直接出现在 constant pool 的明文中。
+- 许多 `pw.hachimi.client.a` ~ `z`、`aa`、`ab` 没有业务字段，只有一批无参静态方法，且引用隐藏类；它们更像初始化/注册分片，而不是独立业务模块。
+
+### 3.3 NativeBridge / PhantomShield
+
+`pw.hachimi.local.NativeBridge` 是 Windows/JNA 层桥接类。静态代码显示它通过 `kernel32` 获取模块与符号地址，检查 `JNI_OnLoad` 相对基址以确认 native build，读取 `native-key.bin`（要求 512 bytes），设置 native key state；随后用 `VirtualProtect` 临时放开页面写权限，写入补丁并调用 `FlushInstructionCache`。代码中的提示文字明确提到 `PhantomShield`、login entry 和 `Ultimate role check`。这意味着 JAR 的一部分授权/角色逻辑并不只在 Java 层。
+
+### 3.4 Native 注册体系（来自 `native_mapping.json`）
+
+`native_mapping.json` 给出统一 registrar：`skidonion.vLZkx.___.___(ILjava/lang/Class;)V`。除 registrar 本身外，记录中的类基本都在 `<clinit>()V` 调用注册流程，并以一个整数 `registrationId` 绑定到对应 native 实现。当前映射共有 **109 个 native 相关类 / 108 个 Registration ID / 464 个 native 方法**。
+
+这使得之前的“Java 静态分析”可以进一步分成三层：
+
+1. **Java 可见实现**：方法体能直接反编译，功能可以按字段、继承和 Minecraft API 推断。
+2. **Java 壳 + native 实现**：类结构、参数/返回类型可见，但核心方法只有 native 签名；功能应优先根据参数类型、事件调用链、父类和 Registration ID 判断。
+3. **native mapping 独有类**：映射中存在，但当前 928-class JAR/JPI workspace 中没有同名 class，不能强行绑定到 `class_N`。
+
+特别重要的是，Setting/JSON 路径也被 native 化：`class_908 / \u0000qt\u200E`、`class_910 / \u0000jl\u200E`、`class_872 / \u0000nH\u200E` 等均有 Gson `JsonObject` 相关 native 方法。也就是说，配置序列化并非完全由 Java 层完成。
+
+另一方面，多数模块类的 native 方法形如 `(... \u0000jx\u200E)V`、`(... \u0000jI\u200E)V`、`(... \u0000pH\u200E)V`、`(... \u0000pj\u200E)V`，很像事件回调/内部上下文入口；而直接接受 `Entity`、`BlockPos`、`ItemStack`、`Screen`、`Vec3d` 的方法则能提供更强的行为域证据。
+
+### 3.5 `skidonion.vLZkx` native 运行时
+
+`skidonion.vLZkx.*` 并不只是一个单独 registrar。native mapping 中有 **37 个**此包类。按公开方法形状可看出至少包含：
+
+- 一套 **JSON tree / parser / writer 风格对象模型**：支持 object/array、primitive、`size()`、`isEmpty()`、迭代器、Reader/Writer、字符串与数值取值；这些类的方法大量 native 化。
+- 一组 **AWT GUI / 键鼠事件辅助类**：出现 `MouseEvent`、`KeyEvent`、`ActionEvent`、`Runnable` / `Thread`。
+- 一组 **字节/字符串编码或变换辅助类**：输入输出为 `byte[]` / `String` / integer state。
+
+因此 `skidonion.vLZkx` 更像随保护方案一起打包的 native-backed runtime，而不是 Hachimi 单一业务模块。这里仅按接口形状归类，不把它武断命名成某个具体第三方库。
+
+### 3.6 Native mapping 与 JPI mapping 的不一致
+
+以下 3 个 `pw.hachimi.client.*` 类存在于 native mapping，但不在当前 `jpi-mappings_pw.json` 的 928 个 class 映射中：
+
+- `pw.hachimi.client.\u0000gS\u200E` — Registration ID `38`，native 方法：`aoS\u200E(CSI)V`
+- `pw.hachimi.client.\u0000lm\u200E` — Registration ID `70`，native 方法：`WQ\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`
+- `pw.hachimi.client.\u0000ff\u200E` — Registration ID `61`，native 方法：`xq\u200E(BJ)V`, `xr\u200E(J)V`, `xs\u200E(J)V`, `xt\u200E(IBI)V`, `xu\u200E(J)Z`
+
+这不应直接解释成“mapping 错误”。更稳妥的可能性包括：native 层运行时注入/生成、JAR 版本差异、映射生成阶段未捕获，或类只存在于另一加载阶段。本文将它们标成 `native-only / 未匹配`。
+
+### 3.7 Satin / Shader
+
+`pw.hachimi.satin.*` 基本是 shader 管理和 uniform 抽象：ManagedShaderEffect、ManagedCoreShader、Uniform1f~4f、Uniform1i~4i、UniformMat4、UniformFinder 等。`Checks` 额外包含 early-access/BETA 权限警告，不只是纯 shader 工具类。
+
+## 4. 静态分析中能直接识别的数据对象
+
+| mapping | 原始类名 | 明文组件/字段提示 | 推断 |
+|---|---|---|---|
+| `class_33` | `pw.hachimi.client.\u0000qy\u200E` | `pos;needPlaceSide` | 数据载体 |
+| `class_215` | `pw.hachimi.client.\u0000nR\u200E` | `name;pos;color;timer` | 数据载体 |
+| `class_657` | `pw.hachimi.client.\u0000kx\u200E` | `entity;ticks;playerPos;offset;speed` | 数据载体 |
+| `class_44` | `pw.hachimi.client.\u0000rh\u200E` | `textureWidth;textureHeight;width;height;value;owner` | 纹理尺寸/数值归属数据 |
+| `class_227` | `pw.hachimi.client.\u0000li\u200E` | `pos;time` | 数据载体 |
+| `class_590` | `pw.hachimi.client.\u0000bV\u200E` | `pos;damage` | 数据载体 |
+| `class_38` | `pw.hachimi.client.\u0000aw\u200E` | `value;key` | 数据载体 |
+| `class_461` | `pw.hachimi.client.\u0000gK\u200E` | `shulker;compact;color;slot;stacks` | Shulker/容器预览数据 |
+| `class_681` | `pw.hachimi.client.\u0000fn\u200E` | `x;y;r;g;b;glyph;matrix4f;a;mode` | 字体/字形渲染数据 |
+| `class_87` | `pw.hachimi.client.\u0000pD\u200E` | `start;end` | 区间/线段数据 |
+| `class_299` | `pw.hachimi.client.\u0000nA\u200E` | `lastPopTime;pops` | 玩家 Totem pop 计数/时间数据 |
+| `class_706` | `pw.hachimi.client.\u0000cJ\u200E` | `pos;time` | 数据载体 |
+| `class_167` | `pw.hachimi.satin.ManagedShaderEffect` | `Method pw/hachimi/satin/ManagedShaderEffect.findUniform1i(Ljava/lang/String;)Lpw/hachimi/satin/uniform/Uniform1i; is abstract` | 数据载体 |
+| `class_585` | `pw.hachimi.client.\u0000nL\u200E` | `damageData;attackTarget;damage;selfDamage;blockPos;antiSurround;support` | 战斗伤害/放置候选数据 |
+| `class_627` | `pw.hachimi.client.\u0000ml\u200E` | `pos;soundEvent` | 位置 + 声音事件数据 |
+| `class_213` | `pw.hachimi.client.\u0000L\u200E` | `position;timeMS;teleportID` | 位置/传送跟踪数据 |
+
+## 5. 全部 928 个 class 功能索引
+
+说明：
+
+- “原始类名”用 `\u0000` / `\u200E` 转义，避免 Markdown/编辑器吞掉控制字符。
+- “位置”=`visible` 表示 ZIP 中存在正常 `.class` 文件名；`hidden#NNN` 表示原 ZIP 中第 N 个伪装目录 class。
+- “功能”若写“客户端功能模块实现”或“事件对象”，是由继承主干直接判断；后面的行为域来自 Minecraft/JDK API 引用。
+- “中-低/低”不代表 class 不重要，只表示字符串加密/控制流混淆让静态命名证据不足。
+
+| mapping | 原始类名 | 位置 | 父类 | 字段/方法 | Native | 功能推断 | 置信度 |
+|---:|---|---|---|---:|---|---|---|
+| `class_1` | `pw.hachimi.client.\u0000ln\u200E` | `hidden#440` | `java.lang.Object` | 1/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_2` | `pw.hachimi.client.\u0000fd\u200E` | `hidden#516` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_3` | `pw.hachimi.client.\u0000aD\u200E` | `hidden#587` | `java.lang.Object` | 1/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_4` | `pw.hachimi.client.\u0000hZ\u200E` | `hidden#277` | `java.lang.Object` | 1/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_5` | `pw.hachimi.client.\u0000ng\u200E` | `hidden#349` | `class_15 / pw.hachimi.client.\u0000bR\u200E` | 10/17 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_6` | `pw.hachimi.client.\u0000np\u200E` | `hidden#467` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 5/12 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_7` | `pw.hachimi.client.\u0000s\u200E` | `hidden#343` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 14/20 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_8` | `pw.hachimi.client.\u0000dB\u200E` | `hidden#140` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 6/12 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_9` | `pw.hachimi.client.\u0000hI\u200E` | `hidden#074` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 4/13 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_10` | `pw.hachimi.client.\u0000fl\u200E` | `hidden#598` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 6/13 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_11` | `pw.hachimi.client.\u0000cX\u200E` | `hidden#784` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 5/15 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_12` | `pw.hachimi.client.\u0000ez\u200E` | `hidden#401` | `class_13 / pw.hachimi.client.\u0000gl\u200E` | 1/9 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_13` | `pw.hachimi.client.\u0000gl\u200E` | `hidden#107` | `class_15 / pw.hachimi.client.\u0000bR\u200E` | 3/6 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_14` | `pw.hachimi.client.\u0000oX\u200E` | `hidden#485` | `class_15 / pw.hachimi.client.\u0000bR\u200E` | 12/19 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_15` | `pw.hachimi.client.\u0000bR\u200E` | `hidden#335` | `class_881 / pw.hachimi.client.\u0000eU\u200E` | 6/9 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_16` | `pw.hachimi.client.\u0000pu\u200E` | `hidden#461` | `java.lang.Object` | 5/14 | — | 内部辅助/管理类；主要涉及：方块/世界交互 | 中 |
+| `class_17` | `pw.hachimi.client.\u0000V\u200E` | `hidden#493` | `class_18 / pw.hachimi.client.\u0000fk\u200E` | 12/27 | ID 2 / 3 methods | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_18` | `pw.hachimi.client.\u0000fk\u200E` | `hidden#535` | `class_881 / pw.hachimi.client.\u0000eU\u200E` | 3/8 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_19` | `pw.hachimi.client.\u0000kH\u200E` | `hidden#457` | `java.lang.Object` | 0/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_20` | `pw.hachimi.client.\u0000hW\u200E` | `hidden#293` | `Screen` | 20/22 | — | Minecraft GUI Screen/界面实现 | 高 |
+| `class_21` | `pw.hachimi.client.\u0000fZ\u200E` | `hidden#341` | `java.lang.Object` | 2/13 | — | 内部辅助/管理类；主要涉及：实体/战斗、移动/玩家状态 | 中 |
+| `class_22` | `pw.hachimi.client.\u0000kA\u200E` | `hidden#366` | `java.lang.Object` | 2/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_23` | `pw.hachimi.client.\u0000mh\u200E` | `hidden#743` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_24` | `pw.hachimi.client.\u0000oT\u200E` | `hidden#435` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_25` | `pw.hachimi.client.\u0000gz\u200E` | `hidden#353` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_26` | `pw.hachimi.client.\u0000ps\u200E` | `hidden#381` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_27` | `pw.hachimi.client.\u0000ns\u200E` | `hidden#436` | `class_644 / pw.hachimi.client.\u0000iQ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_28` | `pw.hachimi.client.\u0000C\u200E` | `hidden#701` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_29` | `pw.hachimi.client.\u0000kS\u200E` | `hidden#522` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：物品/背包 | 中 |
+| `class_30` | `pw.hachimi.client.\u0000pQ\u200E` | `hidden#787` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_31` | `pw.hachimi.client.\u0000gX\u200E` | `hidden#683` | `java.lang.Object` | 11/13 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_32` | `pw.hachimi.client.\u0000oC\u200E` | `hidden#234` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_33` | `pw.hachimi.client.\u0000qy\u200E` | `hidden#014` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：pos、needPlaceSide | 高 |
+| `class_34` | `pw.hachimi.client.\u0000iC\u200E` | `hidden#382` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_35` | `pw.hachimi.client.\u0000cv\u200E` | `hidden#402` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_36` | `pw.hachimi.client.\u0000hc\u200E` | `hidden#459` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_37` | `pw.hachimi.client.\u0000rj\u200E` | `hidden#231` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_38` | `pw.hachimi.client.\u0000aw\u200E` | `hidden#465` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：value、key | 高 |
+| `class_39` | `pw.hachimi.client.\u0000lW\u200E` | `hidden#189` | `java.lang.Object` | 4/9 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_40` | `pw.hachimi.client.\u0000ij\u200E` | `hidden#098` | `class_507 / pw.hachimi.client.\u0000hA\u200E` | 1/8 | — | 内部辅助/管理类；主要涉及：方块/世界交互、实体/战斗 | 中 |
+| `class_41` | `pw.hachimi.client.\u0000jG\u200E` | `hidden#053` | `java.lang.Object` | 5/20 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_42` | `pw.hachimi.client.\u0000he\u200E` | `hidden#430` | `java.lang.Object` | 17/36 | ID 10 / 3 methods | 内部辅助/管理类；主要涉及：数据包/网络、方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_43` | `pw.hachimi.client.\u0000dA\u200E` | `hidden#078` | `java.lang.Object` | 2/10 | — | 内部辅助/管理类；主要涉及：实体/战斗、移动/玩家状态 | 中 |
+| `class_44` | `pw.hachimi.client.\u0000rh\u200E` | `hidden#262` | `java.lang.Record` | 7/12 | — | 数据载体/Record-like；组件：textureWidth、textureHeight、width、height、value、owner | 高 |
+| `class_45` | `pw.hachimi.client.\u0000kt\u200E` | `hidden#105` | `java.lang.Object` | 6/10 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_46` | `pw.hachimi.client.\u0000er\u200E` | `hidden#295` | `java.lang.Object` | 13/14 | — | 内部辅助/管理类；主要涉及：渲染/HUD、文件/IO | 中 |
+| `class_47` | `pw.hachimi.client.\u0000fp\u200E` | `hidden#643` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_48` | `pw.hachimi.client.\u0000ac\u200E` | `hidden#165` | `java.lang.Object` | 2/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_49` | `pw.hachimi.client.\u0000dz\u200E` | `hidden#772` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_50` | `pw.hachimi.client.\u0000iN\u200E` | `hidden#561` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_51` | `pw.hachimi.client.\u0000bM\u200E` | `hidden#271` | `java.lang.Object` | 5/25 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_52` | `pw.hachimi.client.\u0000fo\u200E` | `hidden#582` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_53` | `pw.hachimi.client.\u0000dS\u200E` | `hidden#345` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 9/4 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_54` | `pw.hachimi.client.\u0000ai\u200E` | `hidden#225` | `class_511 / pw.hachimi.client.\u0000aC\u200E` | 1/3 | — | 事件对象/事件上下文；领域：渲染/HUD、物品/背包 | 中 |
+| `class_55` | `pw.hachimi.client.\u0000px\u200E` | `hidden#494` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/4 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_56` | `pw.hachimi.client.\u0000lU\u200E` | `hidden#104` | `java.lang.Object` | 3/30 | — | 内部辅助/管理类；主要涉及：渲染/HUD、方块/世界交互、移动/玩家状态 | 中 |
+| `class_57` | `pw.hachimi.client.\u0000aH\u200E` | `hidden#633` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_58` | `pw.hachimi.client.\u0000cT\u200E` | `hidden#731` | `class_266 / pw.hachimi.client.\u0000pU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_59` | `pw.hachimi.client.\u0000dx\u200E` | `hidden#800` | `class_266 / pw.hachimi.client.\u0000pU\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_60` | `pw.hachimi.client.\u0000hd\u200E` | `hidden#473` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/10 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_61` | `pw.hachimi.client.\u0000fy\u200E` | `hidden#763` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/8 | — | 事件对象/事件上下文；领域：实体/战斗、移动/玩家状态 | 中 |
+| `class_62` | `pw.hachimi.client.\u0000qp\u200E` | `hidden#740` | `class_608 / pw.hachimi.client.\u0000iG\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_63` | `pw.hachimi.client.\u0000ip\u200E` | `hidden#106` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_64` | `pw.hachimi.client.\u0000hl\u200E` | `hidden#550` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/7 | — | 事件对象/事件上下文；领域：移动/玩家状态 | 中 |
+| `class_65` | `pw.hachimi.client.\u0000bd\u200E` | `hidden#617` | `java.lang.Object` | 8/19 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_66` | `pw.hachimi.client.\u0000kB\u200E` | `hidden#325` | `java.lang.Object` | 6/23 | — | 内部辅助/管理类；主要涉及：实体/战斗、移动/玩家状态 | 中 |
+| `class_67` | `pw.hachimi.client.\u0000fi\u200E` | `hidden#563` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_68` | `pw.hachimi.client.\u0000kK\u200E` | `hidden#443` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_69` | `pw.hachimi.client.\u0000o\u200E` | `hidden#384` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_70` | `pw.hachimi.client.mixin.ba` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_71` | `pw.hachimi.client.mixin.an` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_72` | `pw.hachimi.client.\u0000eo\u200E` | `hidden#251` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_73` | `pw.hachimi.client.mixin.ah` | `visible` | `java.lang.Object` | 0/3 | — | Mixin 注入/拦截类 | 高 |
+| `class_74` | `pw.hachimi.client.mixin.aN` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_75` | `pw.hachimi.client.\u0000jF\u200E` | `hidden#041` | `java.lang.Object` | 0/5 | — | 内部辅助/管理类；主要涉及：实体/战斗 | 中 |
+| `class_76` | `pw.hachimi.client.mixin.bB` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_77` | `pw.hachimi.client.mixin.bO` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_78` | `pw.hachimi.client.mixin.bf` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_79` | `pw.hachimi.client.\u0000mA\u200E` | `hidden#318` | `class_80 / pw.hachimi.client.\u0000eu\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_80` | `pw.hachimi.client.\u0000eu\u200E` | `hidden#279` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_81` | `pw.hachimi.client.\u0000mi\u200E` | `hidden#806` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_82` | `pw.hachimi.client.\u0000ra\u200E` | `hidden#110` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_83` | `pw.hachimi.client.\u0000ee\u200E` | `hidden#138` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_84` | `pw.hachimi.client.\u0000fD\u200E` | `hidden#065` | `class_823 / pw.hachimi.client.\u0000pj\u200E` | 1/3 | — | 事件对象/事件上下文；领域：数据包/网络 | 中 |
+| `class_85` | `pw.hachimi.client.\u0000ck\u200E` | `hidden#252` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：物品/背包 | 中 |
+| `class_86` | `pw.hachimi.client.\u0000cE\u200E` | `hidden#618` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/5 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_87` | `pw.hachimi.client.\u0000pD\u200E` | `hidden#630` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：start、end | 高 |
+| `class_88` | `pw.hachimi.client.mixin.aE` | `visible` | `java.lang.Object` | 0/3 | — | Mixin 注入/拦截类 | 高 |
+| `class_89` | `pw.hachimi.client.\u0000ku\u200E` | `hidden#116` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_90` | `pw.hachimi.client.\u0000dO\u200E` | `hidden#297` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_91` | `pw.hachimi.client.\u0000gd\u200E` | `hidden#024` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_92` | `pw.hachimi.client.\u0000mu\u200E` | `hidden#069` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/6 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_93` | `pw.hachimi.client.\u0000iD\u200E` | `hidden#460` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/7 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_94` | `pw.hachimi.client.mixin.bT` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_95` | `pw.hachimi.client.mixin.q` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_96` | `pw.hachimi.client.mixin.aB` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_97` | `pw.hachimi.client.mixin.bK` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_98` | `pw.hachimi.client.mixin.aP` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_99` | `pw.hachimi.client.mixin.bh` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_100` | `pw.hachimi.client.\u0000ob\u200E` | `hidden#668` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_101` | `pw.hachimi.satin.ManagedUniform` | `visible` | `class_102 / pw.hachimi.satin.ManagedUniformBase` | 13/19 | — | 统一变量（uniform）统一接口 | 高 |
+| `class_102` | `pw.hachimi.satin.ManagedUniformBase` | `visible` | `java.lang.Object` | 1/6 | — | Uniform 基类 | 高 |
+| `class_103` | `pw.hachimi.satin.uniform.UniformMat4` | `visible` | `java.lang.Object` | 0/3 | — | 4x4 矩阵 uniform 接口 | 高 |
+| `class_104` | `pw.hachimi.satin.uniform.Uniform4f` | `visible` | `java.lang.Object` | 0/3 | — | 4 个 float 的 uniform 接口 | 高 |
+| `class_105` | `pw.hachimi.satin.uniform.Uniform3f` | `visible` | `java.lang.Object` | 0/3 | — | 3 个 float 的 uniform 接口 | 高 |
+| `class_106` | `pw.hachimi.satin.uniform.Uniform2f` | `visible` | `java.lang.Object` | 0/3 | — | 2 个 float 的 uniform 接口 | 高 |
+| `class_107` | `pw.hachimi.satin.uniform.Uniform1f` | `visible` | `java.lang.Object` | 0/2 | — | 1 个 float 的 uniform 接口 | 高 |
+| `class_108` | `pw.hachimi.satin.uniform.Uniform4i` | `visible` | `java.lang.Object` | 0/2 | — | 4 个 int 的 uniform 接口 | 高 |
+| `class_109` | `pw.hachimi.satin.uniform.Uniform3i` | `visible` | `java.lang.Object` | 0/2 | — | 3 个 int 的 uniform 接口 | 高 |
+| `class_110` | `pw.hachimi.satin.uniform.Uniform2i` | `visible` | `java.lang.Object` | 0/2 | — | 2 个 int 的 uniform 接口 | 高 |
+| `class_111` | `pw.hachimi.satin.uniform.Uniform1i` | `visible` | `java.lang.Object` | 0/2 | — | 1 个 int 的 uniform 接口 | 高 |
+| `class_112` | `pw.hachimi.client.\u0000aO\u200E` | `hidden#724` | `Screen` | 13/35 | — | Minecraft GUI Screen/界面实现 | 高 |
+| `class_113` | `pw.hachimi.client.\u0000ki\u200E` | `hidden#039` | `LivingEntity` | 4/14 | — | 内部辅助/管理类；主要涉及：物品/背包、方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_114` | `pw.hachimi.client.\u0000mn\u200E` | `hidden#050` | `java.lang.Object` | 13/29 | — | 内部辅助/管理类；主要涉及：渲染/HUD、文件/IO | 中 |
+| `class_115` | `pw.hachimi.client.mixin.K` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_116` | `pw.hachimi.client.mixin.R` | `visible` | `java.lang.Object` | 0/8 | — | Mixin 注入/拦截类 | 高 |
+| `class_117` | `pw.hachimi.client.\u0000hO\u200E` | `hidden#181` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_118` | `pw.hachimi.client.\u0000gy\u200E` | `hidden#278` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_119` | `pw.hachimi.client.\u0000aK\u200E` | `hidden#669` | `java.lang.Object` | 0/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_120` | `pw.hachimi.client.mixin.aI` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_121` | `pw.hachimi.client.\u0000gC\u200E` | `hidden#447` | `java.lang.Object` | 0/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_122` | `pw.hachimi.client.\u0000q\u200E` | `hidden#362` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_123` | `pw.hachimi.client.\u0000H\u200E` | `hidden#661` | `java.lang.Object` | 0/4 | — | 内部辅助/管理类；主要涉及：物品/背包 | 中 |
+| `class_124` | `pw.hachimi.client.\u0000mY\u200E` | `hidden#603` | `class_781 / pw.hachimi.client.\u0000pB\u200E` | 3/5 | — | 事件对象/事件上下文；领域：移动/玩家状态 | 中 |
+| `class_125` | `pw.hachimi.client.\u0000dp\u200E` | `hidden#702` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_126` | `pw.hachimi.client.mixin.f` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_127` | `pw.hachimi.client.\u0000ig\u200E` | `hidden#011` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 10/4 | — | 事件对象/事件上下文；领域：渲染/HUD、实体/战斗 | 中 |
+| `class_128` | `pw.hachimi.client.\u0000mr\u200E` | `hidden#082` | `class_137 / pw.hachimi.client.\u0000eh\u200E` | 3/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_129` | `pw.hachimi.client.\u0000oq\u200E` | `hidden#035` | `java.lang.Object` | 7/18 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_130` | `pw.hachimi.client.\u0000ov\u200E` | `hidden#080` | `java.lang.Object` | 0/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_131` | `pw.hachimi.client.mixin.ad` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_132` | `pw.hachimi.client.\u0000oO\u200E` | `hidden#391` | `java.lang.Object` | 3/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_133` | `pw.hachimi.client.\u0000co\u200E` | `hidden#312` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_134` | `pw.hachimi.client.\u0000kJ\u200E` | `hidden#428` | `java.lang.Object` | 4/7 | — | 内部辅助/管理类；主要涉及：方块/世界交互 | 中 |
+| `class_135` | `pw.hachimi.client.\u0000gW\u200E` | `hidden#671` | `java.lang.Enum` | 9/10 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_136` | `pw.hachimi.client.\u0000aY\u200E` | `hidden#084` | `java.lang.Enum` | 5/9 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_137` | `pw.hachimi.client.\u0000eh\u200E` | `hidden#108` | `java.lang.Object` | 27/28 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_138` | `pw.hachimi.client.\u0000km\u200E` | `hidden#085` | `java.lang.Object` | 3/7 | ID 9 / 1 methods | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_139` | `pw.hachimi.client.\u0000hH\u200E` | `hidden#063` | `java.lang.Object` | 15/66 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_140` | `pw.hachimi.client.mixin.al` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类；涉及 Minecraft 类型：class_286 | 高 |
+| `class_141` | `pw.hachimi.client.mixin.bN` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_142` | `pw.hachimi.client.mixin.ap` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_143` | `pw.hachimi.client.mixin.be` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_144` | `pw.hachimi.client.\u0000mm\u200E` | `hidden#037` | `java.lang.Object` | 0/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_145` | `pw.hachimi.client.\u0000jV\u200E` | `hidden#176` | `java.lang.Object` | 0/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_146` | `pw.hachimi.client.mixin.br` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_147` | `pw.hachimi.client.mixin.T` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_148` | `pw.hachimi.client.mixin.aM` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_149` | `pw.hachimi.client.mixin.bn` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_150` | `pw.hachimi.client.mixin.bc` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_151` | `pw.hachimi.client.\u0000kZ\u200E` | `hidden#662` | `class_349 / pw.hachimi.client.\u0000pf\u200E` | 5/11 | ID 50 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_152` | `pw.hachimi.client.\u0000cc\u200E` | `hidden#114` | `class_349 / pw.hachimi.client.\u0000pf\u200E` | 5/12 | ID 19 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_153` | `pw.hachimi.client.\u0000oU\u200E` | `hidden#496` | `java.lang.Enum` | 3/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_154` | `pw.hachimi.client.\u0000cI\u200E` | `hidden#646` | `class_349 / pw.hachimi.client.\u0000pf\u200E` | 5/11 | ID 43 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_155` | `pw.hachimi.client.\u0000cN\u200E` | `hidden#712` | `class_349 / pw.hachimi.client.\u0000pf\u200E` | 6/10 | ID 12 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_156` | `pw.hachimi.client.\u0000ft\u200E` | `hidden#699` | `class_349 / pw.hachimi.client.\u0000pf\u200E` | 5/13 | ID 28 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_157` | `pw.hachimi.client.\u0000oY\u200E` | `hidden#545` | `java.lang.Object` | 13/32 | ID 65 / 5 methods | 内部辅助/管理类；主要涉及：文件/IO | 中 |
+| `class_158` | `pw.hachimi.client.\u0000ia\u200E` | `hidden#798` | `java.lang.Object` | 3/7 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_159` | `pw.hachimi.client.\u0000mK\u200E` | `hidden#393` | `java.lang.Object` | 5/22 | — | 内部辅助/管理类；主要涉及：渲染/HUD、移动/玩家状态 | 中 |
+| `class_160` | `pw.hachimi.client.\u0000mL\u200E` | `hidden#455` | `java.lang.Object` | 5/14 | — | 内部辅助/管理类；主要涉及：JSON/配置、HTTP/网络 | 中 |
+| `class_161` | `pw.hachimi.client.\u0000nm\u200E` | `hidden#376` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：物品/背包 | 中 |
+| `class_162` | `pw.hachimi.client.\u0000cC\u200E` | `hidden#543` | `java.lang.Object` | 4/8 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_163` | `pw.hachimi.client.mixin.s` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_164` | `pw.hachimi.satin.ResettableManagedShaderEffect` | `visible` | `class_165 / pw.hachimi.satin.ResettableManagedShaderBase` | 3/21 | — | 可重置/重载的 ManagedShaderEffect 实现 | 高 |
+| `class_165` | `pw.hachimi.satin.ResettableManagedShaderBase` | `visible` | `java.lang.Object` | 6/34 | — | 可重置 Shader 基类 | 高 |
+| `class_166` | `pw.hachimi.satin.ManagedCoreShader` | `visible` | `java.lang.Object` | 0/3 | — | 核心 Shader 管理接口/封装 | 高 |
+| `class_167` | `pw.hachimi.satin.ManagedShaderEffect` | `visible` | `java.lang.Object` | 0/12 | — | Managed Shader Effect 接口 | 高 |
+| `class_168` | `pw.hachimi.satin.uniform.UniformFinder` | `visible` | `java.lang.Object` | 0/11 | — | Uniform 查找接口 | 高 |
+| `class_169` | `pw.hachimi.satin.ReloadableShaderEffectManager` | `visible` | `java.lang.Object` | 2/14 | — | 可重载屏幕后处理 Shader Effect 管理器 | 高 |
+| `class_170` | `pw.hachimi.satin.ShaderEffectManager` | `visible` | `java.lang.Object` | 0/7 | — | Shader Effect 管理接口 | 高 |
+| `class_171` | `pw.hachimi.client.\u0000pP\u200E` | `hidden#777` | `net.minecraft.class_276` | 2/4 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_172` | `pw.hachimi.client.mixin.j` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_173` | `pw.hachimi.client.\u0000kU\u200E` | `hidden#595` | `java.lang.Object` | 11/19 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_174` | `pw.hachimi.client.\u0000bQ\u200E` | `hidden#321` | `java.lang.Object` | 12/12 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_175` | `pw.hachimi.client.\u0000iP\u200E` | `hidden#533` | `java.lang.Object` | 5/13 | — | 自定义 Brigadier 命令参数解析器 | 高 |
+| `class_176` | `pw.hachimi.client.\u0000y\u200E` | `hidden#049` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 8/10 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_177` | `pw.hachimi.client.\u0000oI\u200E` | `hidden#363` | `java.lang.Object` | 6/14 | — | 自定义 Brigadier 命令参数解析器 | 高 |
+| `class_178` | `pw.hachimi.client.\u0000mJ\u200E` | `hidden#378` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_179` | `pw.hachimi.client.\u0000pm\u200E` | `hidden#329` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/7 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_180` | `pw.hachimi.client.\u0000fa\u200E` | `hidden#432` | `java.lang.Object` | 9/15 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_181` | `pw.hachimi.client.\u0000qX\u200E` | `hidden#434` | `java.lang.Object` | 2/10 | — | 自定义 Brigadier 命令参数解析器 | 高 |
+| `class_182` | `pw.hachimi.client.\u0000nc\u200E` | `hidden#303` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_183` | `pw.hachimi.client.\u0000gs\u200E` | `hidden#260` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 6/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_184` | `pw.hachimi.client.\u0000qS\u200E` | `hidden#389` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_185` | `pw.hachimi.client.\u0000r\u200E` | `hidden#323` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_186` | `pw.hachimi.client.\u0000hU\u200E` | `hidden#215` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/14 | — | Brigadier 客户端命令实现 | 高 |
+| `class_187` | `pw.hachimi.client.\u0000kW\u200E` | `hidden#580` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/15 | — | Brigadier 客户端命令实现 | 高 |
+| `class_188` | `pw.hachimi.client.\u0000dD\u200E` | `hidden#115` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_189` | `pw.hachimi.client.\u0000ld\u200E` | `hidden#364` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_190` | `pw.hachimi.client.\u0000bP\u200E` | `hidden#360` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_191` | `pw.hachimi.client.\u0000aP\u200E` | `hidden#733` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/9 | — | Brigadier 客户端命令实现 | 高 |
+| `class_192` | `pw.hachimi.client.\u0000aV\u200E` | `hidden#048` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_193` | `pw.hachimi.client.\u0000ha\u200E` | `hidden#369` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/9 | — | Brigadier 客户端命令实现 | 高 |
+| `class_194` | `pw.hachimi.client.\u0000ko\u200E` | `hidden#096` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_195` | `pw.hachimi.client.\u0000nC\u200E` | `hidden#718` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/14 | — | Brigadier 客户端命令实现 | 高 |
+| `class_196` | `pw.hachimi.client.\u0000hC\u200E` | `hidden#055` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/9 | — | Brigadier 客户端命令实现 | 高 |
+| `class_197` | `pw.hachimi.client.\u0000iK\u200E` | `hidden#490` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_198` | `pw.hachimi.client.mixin.bb` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_199` | `pw.hachimi.client.\u0000cB\u200E` | `hidden#530` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/13 | — | Brigadier 客户端命令实现 | 高 |
+| `class_200` | `pw.hachimi.client.\u0000iv\u200E` | `hidden#244` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_201` | `pw.hachimi.client.\u0000jz\u200E` | `hidden#625` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_202` | `pw.hachimi.client.\u0000pA\u200E` | `hidden#588` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_203` | `pw.hachimi.client.\u0000qG\u200E` | `hidden#232` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_204` | `pw.hachimi.client.\u0000lP\u200E` | `hidden#097` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_205` | `pw.hachimi.client.\u0000mD\u200E` | `hidden#350` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_206` | `pw.hachimi.client.\u0000pe\u200E` | `hidden#219` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/13 | — | Brigadier 客户端命令实现 | 高 |
+| `class_207` | `pw.hachimi.client.\u0000mR\u200E` | `hidden#510` | `java.lang.Object` | 9/59 | ID 46 / 2 methods | 内部辅助/管理类；主要涉及：命令 | 中 |
+| `class_208` | `pw.hachimi.client.\u0000oa\u200E` | `hidden#649` | `java.lang.Object` | 2/7 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_209` | `pw.hachimi.client.\u0000mI\u200E` | `hidden#420` | `java.lang.Object` | 4/11 | — | 内部辅助/管理类；主要涉及：数据包/网络、实体/战斗 | 中 |
+| `class_210` | `pw.hachimi.client.\u0000mV\u200E` | `hidden#557` | `java.lang.Object` | 5/22 | — | 内部辅助/管理类；主要涉及：方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_211` | `pw.hachimi.client.\u0000fQ\u200E` | `hidden#217` | `java.lang.Object` | 4/8 | — | 内部辅助/管理类；主要涉及：方块/世界交互、移动/玩家状态 | 中 |
+| `class_212` | `pw.hachimi.client.\u0000eO\u200E` | `hidden#620` | `java.lang.Object` | 3/13 | — | 内部辅助/管理类；主要涉及：数据包/网络、实体/战斗 | 中 |
+| `class_213` | `pw.hachimi.client.\u0000L\u200E` | `hidden#812` | `java.lang.Record` | 5/10 | — | 数据载体/Record-like；组件：position、timeMS、teleportID | 高 |
+| `class_214` | `pw.hachimi.client.\u0000hy\u200E` | `hidden#707` | `java.lang.Object` | 8/15 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_215` | `pw.hachimi.client.\u0000nR\u200E` | `hidden#017` | `java.lang.Record` | 5/10 | — | 数据载体/Record-like；组件：name、pos、color、timer | 高 |
+| `class_216` | `pw.hachimi.client.\u0000nr\u200E` | `hidden#424` | `class_781 / pw.hachimi.client.\u0000pB\u200E` | 4/7 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_217` | `pw.hachimi.client.\u0000jf\u200E` | `hidden#395` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_218` | `pw.hachimi.client.\u0000dw\u200E` | `hidden#738` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/6 | — | 事件对象/事件上下文；领域：实体/战斗、移动/玩家状态 | 中 |
+| `class_219` | `pw.hachimi.client.\u0000jx\u200E` | `hidden#651` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_220` | `pw.hachimi.client.\u0000lM\u200E` | `hidden#020` | `class_781 / pw.hachimi.client.\u0000pB\u200E` | 3/4 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_221` | `pw.hachimi.client.\u0000if\u200E` | `hidden#054` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：移动/玩家状态 | 中 |
+| `class_222` | `pw.hachimi.client.\u0000iz\u200E` | `hidden#292` | `java.lang.Object` | 15/30 | ID 54 / 4 methods | 内部辅助/管理类；主要涉及：数据包/网络、移动/玩家状态 | 中 |
+| `class_223` | `pw.hachimi.client.mixin.aC` | `visible` | `java.lang.Object` | 0/6 | — | Mixin 注入/拦截类 | 高 |
+| `class_224` | `pw.hachimi.client.\u0000bD\u200E` | `hidden#166` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/4 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_225` | `pw.hachimi.client.\u0000aS\u200E` | `hidden#769` | `java.lang.Object` | 1/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_226` | `pw.hachimi.client.\u0000hJ\u200E` | `hidden#136` | `java.lang.Object` | 4/39 | — | 内部辅助/管理类；主要涉及：数据包/网络、物品/背包 | 中 |
+| `class_227` | `pw.hachimi.client.\u0000li\u200E` | `hidden#379` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：pos、time | 高 |
+| `class_228` | `pw.hachimi.client.\u0000eQ\u200E` | `hidden#703` | `java.lang.Object` | 5/17 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_229` | `pw.hachimi.client.\u0000oJ\u200E` | `hidden#331` | `java.lang.Object` | 3/19 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_230` | `pw.hachimi.client.\u0000nD\u200E` | `hidden#681` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_231` | `pw.hachimi.client.\u0000lo\u200E` | `hidden#437` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_232` | `pw.hachimi.client.\u0000hb\u200E` | `hidden#383` | `class_747 / pw.hachimi.client.\u0000in\u200E` | 31/15 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_233` | `pw.hachimi.client.\u0000oV\u200E` | `hidden#508` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 37/17 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包 | 中 |
+| `class_234` | `pw.hachimi.client.\u0000dU\u200E` | `hidden#319` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 7/13 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包 | 中 |
+| `class_235` | `pw.hachimi.client.\u0000me\u200E` | `hidden#753` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 15/15 | — | 客户端功能模块实现；行为域：渲染/HUD、实体/战斗 | 中 |
+| `class_236` | `pw.hachimi.client.\u0000cb\u200E` | `hidden#150` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 8/13 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_237` | `pw.hachimi.client.\u0000cl\u200E` | `hidden#208` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 5/9 | — | 客户端功能模块实现；行为域：方块/世界交互 | 中 |
+| `class_238` | `pw.hachimi.client.\u0000gp\u200E` | `hidden#152` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 4/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_239` | `pw.hachimi.client.\u0000qr\u200E` | `hidden#814` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 5/9 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_240` | `pw.hachimi.client.\u0000ka\u200E` | `hidden#755` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 4/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_241` | `pw.hachimi.client.\u0000id\u200E` | `hidden#792` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 13/14 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_242` | `pw.hachimi.client.\u0000ce\u200E` | `hidden#191` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 4/9 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_243` | `pw.hachimi.client.\u0000at\u200E` | `hidden#372` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_244` | `pw.hachimi.client.\u0000lZ\u200E` | `hidden#174` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 16/18 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_245` | `pw.hachimi.client.\u0000bH\u200E` | `hidden#254` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 6/13 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包、实体/战斗 | 中 |
+| `class_246` | `pw.hachimi.client.\u0000ej\u200E` | `hidden#183` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 2/8 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包 | 中 |
+| `class_247` | `pw.hachimi.client.\u0000aM\u200E` | `hidden#750` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 5/9 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_248` | `pw.hachimi.client.\u0000mv\u200E` | `hidden#128` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_249` | `pw.hachimi.client.\u0000lj\u200E` | `hidden#394` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_250` | `pw.hachimi.client.\u0000iO\u200E` | `hidden#524` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_251` | `pw.hachimi.client.\u0000kh\u200E` | `hidden#790` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 17/22 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_252` | `pw.hachimi.client.\u0000qR\u200E` | `hidden#374` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 11/9 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_253` | `pw.hachimi.client.\u0000gY\u200E` | `hidden#745` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 4/9 | — | 客户端功能模块实现；行为域：方块/世界交互 | 中 |
+| `class_254` | `pw.hachimi.client.\u0000nV\u200E` | `hidden#070` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_255` | `pw.hachimi.client.\u0000lb\u200E` | `hidden#290` | `class_256 / pw.hachimi.client.\u0000gr\u200E` | 11/9 | — | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_256` | `pw.hachimi.client.\u0000gr\u200E` | `hidden#246` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 10/13 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_257` | `pw.hachimi.client.\u0000hP\u200E` | `hidden#197` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_258` | `pw.hachimi.client.\u0000ea\u200E` | `hidden#089` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_259` | `pw.hachimi.client.\u0000pJ\u200E` | `hidden#751` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_260` | `pw.hachimi.client.\u0000fJ\u200E` | `hidden#121` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_261` | `pw.hachimi.client.\u0000bU\u200E` | `hidden#373` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_262` | `pw.hachimi.client.\u0000dE\u200E` | `hidden#125` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_263` | `pw.hachimi.client.\u0000lc\u200E` | `hidden#351` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/5 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_264` | `pw.hachimi.client.\u0000aN\u200E` | `hidden#759` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_265` | `pw.hachimi.client.\u0000im\u200E` | `hidden#072` | `java.lang.Enum` | 7/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_266` | `pw.hachimi.client.\u0000pU\u200E` | `hidden#001` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/8 | — | 事件对象/事件上下文；领域：渲染/HUD、移动/玩家状态 | 中 |
+| `class_267` | `pw.hachimi.client.\u0000lL\u200E` | `hidden#009` | `java.lang.Enum` | 7/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_268` | `pw.hachimi.client.\u0000cf\u200E` | `hidden#185` | `class_808 / pw.hachimi.client.\u0000mQ\u200E` | 54/48 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包、方块/世界交互 | 中 |
+| `class_269` | `pw.hachimi.client.\u0000bi\u200E` | `hidden#658` | `java.lang.Object` | 0/1 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_270` | `pw.hachimi.client.\u0000dq\u200E` | `hidden#710` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/22 | ID 23 / 3 methods | 客户端功能模块实现；行为域：物品/背包、移动/玩家状态 | 中 |
+| `class_271` | `pw.hachimi.client.\u0000hf\u200E` | `hidden#445` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 3/6 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_272` | `pw.hachimi.client.\u0000lf\u200E` | `hidden#337` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 14/15 | ID 53 / 1 methods | 客户端功能模块实现；行为域：方块/世界交互 | 中 |
+| `class_273` | `pw.hachimi.client.\u0000oD\u200E` | `hidden#304` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 28/21 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互 | 中 |
+| `class_274` | `pw.hachimi.client.\u0000jE\u200E` | `hidden#793` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/14 | ID 40 / 2 methods | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_275` | `pw.hachimi.client.\u0000nG\u200E` | `hidden#760` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_276` | `pw.hachimi.client.\u0000eS\u200E` | `hidden#673` | `java.lang.Enum` | 3/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_277` | `pw.hachimi.client.\u0000eG\u200E` | `hidden#541` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/14 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_278` | `pw.hachimi.client.\u0000mS\u200E` | `hidden#476` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/12 | — | 客户端功能模块实现；行为域：渲染/HUD、实体/战斗、移动/玩家状态 | 中 |
+| `class_279` | `pw.hachimi.client.\u0000eg\u200E` | `hidden#112` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_280` | `pw.hachimi.client.\u0000jk\u200E` | `hidden#501` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_281` | `pw.hachimi.client.\u0000gM\u200E` | `hidden#599` | `class_870 / pw.hachimi.client.\u0000hR\u200E` | 2/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_282` | `pw.hachimi.client.\u0000de\u200E` | `hidden#528` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_283` | `pw.hachimi.client.\u0000qm\u200E` | `hidden#757` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 22/31 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包、方块/世界交互 | 中 |
+| `class_284` | `pw.hachimi.client.\u0000R\u200E` | `hidden#734` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/14 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_285` | `pw.hachimi.client.\u0000cP\u200E` | `hidden#687` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_286` | `pw.hachimi.client.\u0000mq\u200E` | `hidden#018` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/19 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_287` | `pw.hachimi.client.\u0000ei\u200E` | `hidden#122` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/12 | — | 客户端功能模块实现；行为域：方块/世界交互、移动/玩家状态 | 中 |
+| `class_288` | `pw.hachimi.client.\u0000dG\u200E` | `hidden#186` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/16 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_289` | `pw.hachimi.client.\u0000qf\u200E` | `hidden#667` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/12 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_290` | `pw.hachimi.client.\u0000ap\u200E` | `hidden#322` | `java.lang.Enum` | 5/11 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_291` | `pw.hachimi.client.\u0000ht\u200E` | `hidden#653` | `java.lang.Enum` | 7/11 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_292` | `pw.hachimi.client.\u0000pV\u200E` | `hidden#015` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_293` | `pw.hachimi.client.\u0000bG\u200E` | `hidden#241` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_294` | `pw.hachimi.client.\u0000or\u200E` | `hidden#028` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_295` | `pw.hachimi.client.\u0000iS\u200E` | `hidden#572` | `java.lang.Object` | 8/7 | — | 内部辅助/管理类；主要涉及：方块/世界交互、实体/战斗 | 中 |
+| `class_296` | `pw.hachimi.client.\u0000oP\u200E` | `hidden#452` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 65/101 | ID 24 / 3 methods | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、物品/背包 | 中 |
+| `class_297` | `pw.hachimi.client.\u0000lE\u200E` | `hidden#735` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/14 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互 | 中 |
+| `class_298` | `pw.hachimi.client.\u0000mP\u200E` | `hidden#438` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/19 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_299` | `pw.hachimi.client.\u0000nA\u200E` | `hidden#642` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：lastPopTime、pops | 高 |
+| `class_300` | `pw.hachimi.client.\u0000hp\u200E` | `hidden#596` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 12/18 | ID 41 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包 | 中 |
+| `class_301` | `pw.hachimi.client.\u0000dY\u200E` | `hidden#370` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/31 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、实体/战斗 | 中 |
+| `class_302` | `pw.hachimi.client.\u0000lO\u200E` | `hidden#083` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_303` | `pw.hachimi.client.\u0000m\u200E` | `hidden#415` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/10 | — | 客户端功能模块实现；行为域：实体/战斗 | 中 |
+| `class_304` | `pw.hachimi.client.\u0000kz\u200E` | `hidden#242` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/18 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包、方块/世界交互 | 中 |
+| `class_305` | `pw.hachimi.client.\u0000bn\u200E` | `hidden#676` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_306` | `pw.hachimi.client.\u0000ox\u200E` | `hidden#056` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_307` | `pw.hachimi.client.\u0000B\u200E` | `hidden#118` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_308` | `pw.hachimi.client.\u0000js\u200E` | `hidden#532` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_309` | `pw.hachimi.client.\u0000bL\u200E` | `hidden#305` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 18/29 | ID 32 / 1 methods | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、方块/世界交互 | 中 |
+| `class_310` | `pw.hachimi.client.\u0000fw\u200E` | `hidden#684` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_311` | `pw.hachimi.client.\u0000qj\u200E` | `hidden#715` | `class_312 / pw.hachimi.client.\u0000gk\u200E` | 6/7 | — | 内部辅助/管理类；主要涉及：渲染/HUD、实体/战斗、移动/玩家状态 | 中 |
+| `class_312` | `pw.hachimi.client.\u0000gk\u200E` | `hidden#147` | `net.minecraft.class_745` | 4/12 | — | 内部辅助/管理类；主要涉及：实体/战斗 | 中 |
+| `class_313` | `pw.hachimi.client.\u0000mt\u200E` | `hidden#057` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_314` | `pw.hachimi.client.\u0000oQ\u200E` | `hidden#468` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 21/18 | — | 客户端功能模块实现；行为域：渲染/HUD、实体/战斗、移动/玩家状态 | 中 |
+| `class_315` | `pw.hachimi.client.\u0000nl\u200E` | `hidden#419` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_316` | `pw.hachimi.client.\u0000na\u200E` | `hidden#221` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 28/37 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包 | 中 |
+| `class_317` | `pw.hachimi.client.\u0000gg\u200E` | `hidden#064` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 17/16 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互 | 中 |
+| `class_318` | `pw.hachimi.client.\u0000mp\u200E` | `hidden#003` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_319` | `pw.hachimi.client.\u0000nq\u200E` | `hidden#463` | `java.lang.Enum` | 7/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_320` | `pw.hachimi.client.\u0000qi\u200E` | `hidden#704` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 17/29 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络 | 中 |
+| `class_321` | `pw.hachimi.client.\u0000jq\u200E` | `hidden#559` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/25 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、实体/战斗 | 中 |
+| `class_322` | `pw.hachimi.client.\u0000ib\u200E` | `hidden#809` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 21/21 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、实体/战斗 | 中 |
+| `class_323` | `pw.hachimi.client.\u0000gH\u200E` | `hidden#552` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 6/14 | — | 事件对象/事件上下文；领域：移动/玩家状态 | 中 |
+| `class_324` | `pw.hachimi.client.\u0000bC\u200E` | `hidden#206` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_325` | `pw.hachimi.client.\u0000kI\u200E` | `hidden#471` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/12 | — | 客户端功能模块实现；行为域：物品/背包、方块/世界交互 | 中 |
+| `class_326` | `pw.hachimi.client.\u0000p\u200E` | `hidden#352` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_327` | `pw.hachimi.client.\u0000po\u200E` | `hidden#405` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/23 | — | 客户端功能模块实现；行为域：渲染/HUD、实体/战斗、移动/玩家状态 | 中 |
+| `class_328` | `pw.hachimi.client.\u0000mb\u200E` | `hidden#719` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_329` | `pw.hachimi.client.\u0000al\u200E` | `hidden#272` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/9 | — | Brigadier 客户端命令实现 | 高 |
+| `class_330` | `pw.hachimi.client.\u0000eI\u200E` | `hidden#600` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/12 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、移动/玩家状态 | 中 |
+| `class_331` | `pw.hachimi.client.\u0000fv\u200E` | `hidden#672` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_332` | `pw.hachimi.client.\u0000ky\u200E` | `hidden#175` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 19/23 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_333` | `pw.hachimi.client.\u0000ho\u200E` | `hidden#534` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/14 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_334` | `pw.hachimi.client.\u0000eq\u200E` | `hidden#229` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_335` | `pw.hachimi.client.\u0000dc\u200E` | `hidden#554` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 5/17 | ID 29 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_336` | `pw.hachimi.client.\u0000rf\u200E` | `hidden#178` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_337` | `pw.hachimi.client.\u0000mW\u200E` | `hidden#519` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_338` | `pw.hachimi.client.\u0000nQ\u200E` | `hidden#004` | `java.lang.Enum` | 8/10 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_339` | `pw.hachimi.client.\u0000cr\u200E` | `hidden#346` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/7 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_340` | `pw.hachimi.client.\u0000cn\u200E` | `hidden#298` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/10 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_341` | `pw.hachimi.client.\u0000qQ\u200E` | `hidden#417` | `java.lang.Object` | 5/10 | ID 51 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_342` | `pw.hachimi.client.\u0000aF\u200E` | `hidden#660` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 25/23 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_343` | `pw.hachimi.client.\u0000et\u200E` | `hidden#266` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 23/32 | ID 34 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_344` | `pw.hachimi.client.\u0000gE\u200E` | `hidden#517` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_345` | `pw.hachimi.client.\u0000jT\u200E` | `hidden#195` | `class_871 / pw.hachimi.client.\u0000F\u200E` | 2/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_346` | `pw.hachimi.client.\u0000fR\u200E` | `hidden#230` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/15 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_347` | `pw.hachimi.client.\u0000ga\u200E` | `hidden#030` | `java.lang.Object` | 9/26 | — | 内部辅助/管理类；主要涉及：数据包/网络、方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_348` | `pw.hachimi.client.\u0000qv\u200E` | `hidden#027` | `class_349 / pw.hachimi.client.\u0000pf\u200E` | 6/12 | ID 44 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_349` | `pw.hachimi.client.\u0000pf\u200E` | `hidden#233` | `java.lang.Object` | 7/21 | ID 66 / 1 methods | 内部辅助/管理类；主要涉及：JSON/配置、文件/IO | 中 |
+| `class_350` | `pw.hachimi.client.\u0000fK\u200E` | `hidden#184` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_351` | `pw.hachimi.client.\u0000br\u200E` | `hidden#722` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/39 | — | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_352` | `pw.hachimi.client.\u0000kr\u200E` | `hidden#130` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/11 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_353` | `pw.hachimi.client.\u0000bp\u200E` | `hidden#749` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/15 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_354` | `pw.hachimi.client.\u0000jd\u200E` | `hidden#412` | `java.lang.Enum` | 3/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_355` | `pw.hachimi.client.\u0000hG\u200E` | `hidden#099` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 28/26 | — | 客户端功能模块实现；行为域：渲染/HUD、实体/战斗 | 中 |
+| `class_356` | `pw.hachimi.client.\u0000it\u200E` | `hidden#162` | `java.lang.Object` | 6/9 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_357` | `pw.hachimi.client.\u0000gq\u200E` | `hidden#167` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 35/41 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、实体/战斗 | 中 |
+| `class_358` | `pw.hachimi.client.\u0000cj\u200E` | `hidden#239` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/23 | — | 客户端功能模块实现；行为域：渲染/HUD、移动/玩家状态 | 中 |
+| `class_359` | `pw.hachimi.client.\u0000jW\u200E` | `hidden#245` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 18/16 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、实体/战斗 | 中 |
+| `class_360` | `pw.hachimi.client.\u0000ql\u200E` | `hidden#694` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/13 | — | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_361` | `pw.hachimi.client.\u0000Z\u200E` | `hidden#442` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/21 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、实体/战斗 | 中 |
+| `class_362` | `pw.hachimi.client.\u0000hF\u200E` | `hidden#088` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 34/41 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包、实体/战斗 | 中 |
+| `class_363` | `pw.hachimi.client.\u0000lR\u200E` | `hidden#071` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/10 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_364` | `pw.hachimi.client.\u0000gn\u200E` | `hidden#182` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_365` | `pw.hachimi.client.\u0000kl\u200E` | `hidden#021` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/20 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_366` | `pw.hachimi.client.\u0000gh\u200E` | `hidden#075` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_367` | `pw.hachimi.client.\u0000iU\u200E` | `hidden#654` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/11 | — | 客户端功能模块实现；行为域：实体/战斗 | 中 |
+| `class_368` | `pw.hachimi.client.\u0000il\u200E` | `hidden#061` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_369` | `pw.hachimi.client.\u0000jj\u200E` | `hidden#444` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/9 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_370` | `pw.hachimi.client.\u0000oR\u200E` | `hidden#464` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 31/58 | ID 31 / 4 methods | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_371` | `pw.hachimi.client.\u0000qZ\u200E` | `hidden#506` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/17 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互 | 中 |
+| `class_372` | `pw.hachimi.client.\u0000fF\u200E` | `hidden#139` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_373` | `pw.hachimi.client.\u0000lA\u200E` | `hidden#693` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_374` | `pw.hachimi.client.\u0000gB\u200E` | `hidden#433` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/7 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_375` | `pw.hachimi.client.\u0000pb\u200E` | `hidden#173` | `java.lang.Enum` | 7/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_376` | `pw.hachimi.client.\u0000dj\u200E` | `hidden#576` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 11/22 | — | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_377` | `pw.hachimi.client.\u0000jD\u200E` | `hidden#770` | `java.lang.Enum` | 11/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_378` | `pw.hachimi.client.\u0000cH\u200E` | `hidden#586` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 28/37 | — | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_379` | `pw.hachimi.client.\u0000ek\u200E` | `hidden#198` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/15 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_380` | `pw.hachimi.client.\u0000nK\u200E` | `hidden#817` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/10 | — | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_381` | `pw.hachimi.client.\u0000fg\u200E` | `hidden#553` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_382` | `pw.hachimi.client.\u0000pl\u200E` | `hidden#367` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/22 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_383` | `pw.hachimi.client.\u0000lY\u200E` | `hidden#160` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 21/29 | ID 15 / 3 methods | 客户端功能模块实现；行为域：物品/背包、移动/玩家状态 | 中 |
+| `class_384` | `pw.hachimi.client.\u0000aG\u200E` | `hidden#623` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_385` | `pw.hachimi.client.\u0000hz\u200E` | `hidden#670` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/8 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_386` | `pw.hachimi.client.\u0000gt\u200E` | `hidden#216` | `java.lang.Enum` | 8/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_387` | `pw.hachimi.client.\u0000kM\u200E` | `hidden#513` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 21/42 | ID 39 / 2 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_388` | `pw.hachimi.client.\u0000cx\u200E` | `hidden#371` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_389` | `pw.hachimi.client.\u0000qP\u200E` | `hidden#406` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_390` | `pw.hachimi.client.\u0000oc\u200E` | `hidden#631` | `java.lang.Enum` | 9/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_391` | `pw.hachimi.client.\u0000nI\u200E` | `hidden#744` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_392` | `pw.hachimi.client.\u0000rl\u200E` | `hidden#314` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/25 | ID 36 / 4 methods | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_393` | `pw.hachimi.client.\u0000no\u200E` | `hidden#453` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 15/13 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_394` | `pw.hachimi.client.\u0000dV\u200E` | `hidden#333` | `java.lang.Object` | 2/6 | — | 内部辅助/管理类；主要涉及：物品/背包、方块/世界交互、实体/战斗 | 中 |
+| `class_395` | `pw.hachimi.client.\u0000ne\u200E` | `hidden#273` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_396` | `pw.hachimi.client.\u0000eJ\u200E` | `hidden#609` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/21 | — | 客户端功能模块实现；行为域：数据包/网络、实体/战斗、移动/玩家状态 | 中 |
+| `class_397` | `pw.hachimi.client.\u0000mH\u200E` | `hidden#408` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_398` | `pw.hachimi.client.\u0000ay\u200E` | `hidden#439` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 18/29 | ID 16 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_399` | `pw.hachimi.client.\u0000kj\u200E` | `hidden#052` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_400` | `pw.hachimi.client.\u0000jw\u200E` | `hidden#589` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_401` | `pw.hachimi.client.\u0000mU\u200E` | `hidden#547` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 18/26 | — | 客户端功能模块实现；行为域：数据包/网络、实体/战斗、移动/玩家状态 | 中 |
+| `class_402` | `pw.hachimi.client.\u0000lG\u200E` | `hidden#819` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/12 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_403` | `pw.hachimi.client.\u0000dv\u200E` | `hidden#720` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_404` | `pw.hachimi.client.\u0000iM\u200E` | `hidden#551` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_405` | `pw.hachimi.client.\u0000og\u200E` | `hidden#679` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_406` | `pw.hachimi.client.\u0000dP\u200E` | `hidden#313` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_407` | `pw.hachimi.client.\u0000em\u200E` | `hidden#169` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_408` | `pw.hachimi.client.\u0000mx\u200E` | `hidden#111` | `java.lang.Object` | 2/10 | — | 内部辅助/管理类；主要涉及：物品/背包、移动/玩家状态 | 中 |
+| `class_409` | `pw.hachimi.client.\u0000bw\u200E` | `hidden#785` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_410` | `pw.hachimi.client.\u0000dN\u200E` | `hidden#223` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/7 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_411` | `pw.hachimi.client.\u0000pr\u200E` | `hidden#390` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/23 | — | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_412` | `pw.hachimi.client.\u0000gI\u200E` | `hidden#567` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/20 | — | 客户端功能模块实现；行为域：移动/玩家状态 | 中 |
+| `class_413` | `pw.hachimi.client.\u0000aA\u200E` | `hidden#619` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/16 | — | 客户端功能模块实现；行为域：方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_414` | `pw.hachimi.client.\u0000iF\u200E` | `hidden#431` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 19/23 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互 | 中 |
+| `class_415` | `pw.hachimi.client.\u0000fG\u200E` | `hidden#148` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/14 | — | 客户端功能模块实现；行为域：实体/战斗 | 中 |
+| `class_416` | `pw.hachimi.client.\u0000kX\u200E` | `hidden#590` | `class_417 / pw.hachimi.client.\u0000fh\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_417` | `pw.hachimi.client.\u0000fh\u200E` | `hidden#568` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_418` | `pw.hachimi.client.\u0000M\u200E` | `hidden#773` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_419` | `pw.hachimi.client.\u0000dW\u200E` | `hidden#403` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 15/11 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_420` | `pw.hachimi.client.\u0000dl\u200E` | `hidden#644` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_421` | `pw.hachimi.client.\u0000av\u200E` | `hidden#450` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 34/52 | ID 52 / 2 methods | 客户端功能模块实现；行为域：数据包/网络、实体/战斗 | 中 |
+| `class_422` | `pw.hachimi.client.\u0000mz\u200E` | `hidden#188` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_423` | `pw.hachimi.client.\u0000dT\u200E` | `hidden#358` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/9 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_424` | `pw.hachimi.client.\u0000jX\u200E` | `hidden#258` | `java.lang.Object` | 5/15 | — | 内部辅助/管理类；主要涉及：数据包/网络、方块/世界交互 | 中 |
+| `class_425` | `pw.hachimi.client.\u0000cq\u200E` | `hidden#282` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/13 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_426` | `pw.hachimi.client.\u0000eb\u200E` | `hidden#101` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_427` | `pw.hachimi.client.\u0000rg\u200E` | `hidden#248` | `java.lang.Object` | 6/22 | — | 内部辅助/管理类；主要涉及：实体/战斗 | 中 |
+| `class_428` | `pw.hachimi.client.\u0000bc\u200E` | `hidden#605` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/21 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_429` | `pw.hachimi.client.\u0000qu\u200E` | `hidden#782` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_430` | `pw.hachimi.client.\u0000Y\u200E` | `hidden#426` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/18 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_431` | `pw.hachimi.client.\u0000lz\u200E` | `hidden#579` | `class_432 / pw.hachimi.client.\u0000ik\u200E` | 1/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_432` | `pw.hachimi.client.\u0000ik\u200E` | `hidden#062` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_433` | `pw.hachimi.client.\u0000ep\u200E` | `hidden#218` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/18 | — | 客户端功能模块实现；行为域：命令、文件/IO | 中 |
+| `class_434` | `pw.hachimi.client.\u0000qN\u200E` | `hidden#330` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：实体/战斗 | 中 |
+| `class_435` | `pw.hachimi.client.\u0000pT\u200E` | `hidden#044` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/14 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_436` | `pw.hachimi.client.\u0000gU\u200E` | `hidden#700` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_437` | `pw.hachimi.client.\u0000aL\u200E` | `hidden#689` | `net.minecraft.class_743` | 4/6 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_438` | `pw.hachimi.client.\u0000cG\u200E` | `hidden#577` | `class_747 / pw.hachimi.client.\u0000in\u200E` | 9/15 | — | 内部辅助/管理类；主要涉及：数据包/网络、移动/玩家状态 | 中 |
+| `class_439` | `pw.hachimi.client.\u0000qs\u200E` | `hidden#776` | `class_440 / pw.hachimi.client.\u0000qL\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_440` | `pw.hachimi.client.\u0000qL\u200E` | `hidden#354` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_441` | `pw.hachimi.client.\u0000df\u200E` | `hidden#542` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_442` | `pw.hachimi.client.\u0000kL\u200E` | `hidden#502` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/7 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_443` | `pw.hachimi.client.\u0000ic\u200E` | `hidden#771` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/9 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_444` | `pw.hachimi.client.\u0000pp\u200E` | `hidden#418` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_445` | `pw.hachimi.client.\u0000nw\u200E` | `hidden#486` | `java.lang.Object` | 4/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_446` | `pw.hachimi.client.\u0000pq\u200E` | `hidden#375` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/17 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_447` | `pw.hachimi.client.\u0000fr\u200E` | `hidden#628` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 6/13 | — | 事件对象/事件上下文；领域：移动/玩家状态 | 中 |
+| `class_448` | `pw.hachimi.client.\u0000jp\u200E` | `hidden#548` | `class_747 / pw.hachimi.client.\u0000in\u200E` | 11/31 | ID 62 / 2 methods | 内部辅助/管理类；主要涉及：物品/背包、文件/IO | 中 |
+| `class_449` | `pw.hachimi.client.\u0000gc\u200E` | `hidden#013` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_450` | `pw.hachimi.client.\u0000hw\u200E` | `hidden#635` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/24 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_451` | `pw.hachimi.client.\u0000nx\u200E` | `hidden#546` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_452` | `pw.hachimi.client.\u0000gO\u200E` | `hidden#574` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_453` | `pw.hachimi.client.\u0000hu\u200E` | `hidden#664` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 6/21 | — | Brigadier 客户端命令实现 | 高 |
+| `class_454` | `pw.hachimi.client.\u0000hx\u200E` | `hidden#697` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 19/37 | ID 57 / 2 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_455` | `pw.hachimi.client.\u0000c\u200E` | `hidden#538` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/9 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_456` | `pw.hachimi.client.\u0000jJ\u200E` | `hidden#086` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_457` | `pw.hachimi.client.\u0000cZ\u200E` | `hidden#046` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_458` | `pw.hachimi.client.\u0000hT\u200E` | `hidden#261` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/27 | ID 27 / 1 methods | 客户端功能模块实现；行为域：物品/背包 | 中 |
+| `class_459` | `pw.hachimi.client.\u0000nX\u200E` | `hidden#142` | `java.lang.Object` | 2/9 | — | 自定义 Brigadier 命令参数解析器 | 高 |
+| `class_460` | `pw.hachimi.client.\u0000oA\u200E` | `hidden#256` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/23 | — | 客户端功能模块实现；行为域：数据包/网络、实体/战斗 | 中 |
+| `class_461` | `pw.hachimi.client.\u0000gK\u200E` | `hidden#526` | `java.lang.Record` | 7/19 | — | 数据载体/Record-like；组件：shulker、compact、color、slot、stacks | 高 |
+| `class_462` | `pw.hachimi.client.\u0000nv\u200E` | `hidden#475` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_463` | `pw.hachimi.client.\u0000eY\u200E` | `hidden#801` | `java.lang.Object` | 5/10 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_464` | `pw.hachimi.client.\u0000mO\u200E` | `hidden#441` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 9/14 | — | 客户端功能模块实现；行为域：方块/世界交互 | 中 |
+| `class_465` | `pw.hachimi.client.\u0000dg\u200E` | `hidden#537` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_466` | `pw.hachimi.client.\u0000cg\u200E` | `hidden#200` | `class_644 / pw.hachimi.client.\u0000iQ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_467` | `pw.hachimi.client.\u0000kd\u200E` | `hidden#736` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_468` | `pw.hachimi.client.\u0000qa\u200E` | `hidden#602` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/9 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_469` | `pw.hachimi.client.\u0000do\u200E` | `hidden#639` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/23 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_470` | `pw.hachimi.client.\u0000fW\u200E` | `hidden#344` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 36/57 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、物品/背包 | 中 |
+| `class_471` | `pw.hachimi.client.\u0000gi\u200E` | `hidden#137` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/13 | — | 客户端功能模块实现；行为域：数据包/网络、实体/战斗 | 中 |
+| `class_472` | `pw.hachimi.client.\u0000dC\u200E` | `hidden#151` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/12 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_473` | `pw.hachimi.client.\u0000ke\u200E` | `hidden#796` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/13 | — | 客户端功能模块实现；行为域：物品/背包 | 中 |
+| `class_474` | `pw.hachimi.client.\u0000bW\u200E` | `hidden#451` | `java.lang.Object` | 8/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_475` | `pw.hachimi.client.\u0000pL\u200E` | `hidden#729` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_476` | `pw.hachimi.client.\u0000bB\u200E` | `hidden#193` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/10 | — | Brigadier 客户端命令实现 | 高 |
+| `class_477` | `pw.hachimi.client.\u0000ni\u200E` | `hidden#332` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/17 | — | 客户端功能模块实现；行为域：物品/背包 | 中 |
+| `class_478` | `pw.hachimi.client.\u0000jC\u200E` | `hidden#810` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/11 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_479` | `pw.hachimi.client.\u0000dL\u200E` | `hidden#253` | `java.lang.Enum` | 8/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_480` | `pw.hachimi.client.\u0000ll\u200E` | `hidden#469` | `java.lang.Enum` | 7/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_481` | `pw.hachimi.client.\u0000cs\u200E` | `hidden#359` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 15/13 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_482` | `pw.hachimi.client.\u0000bN\u200E` | `hidden#284` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_483` | `pw.hachimi.client.\u0000nT\u200E` | `hidden#094` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 15/17 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_484` | `pw.hachimi.client.\u0000eL\u200E` | `hidden#584` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_485` | `pw.hachimi.client.\u0000lh\u200E` | `hidden#421` | `java.lang.Enum` | 7/9 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_486` | `pw.hachimi.client.\u0000jb\u200E` | `hidden#339` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/7 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_487` | `pw.hachimi.client.\u0000qe\u200E` | `hidden#655` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 27/49 | ID 13 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、移动/玩家状态 | 中 |
+| `class_488` | `pw.hachimi.client.\u0000ny\u200E` | `hidden#565` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_489` | `pw.hachimi.client.\u0000iA\u200E` | `hidden#414` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/5 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_490` | `pw.hachimi.client.\u0000iJ\u200E` | `hidden#479` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/5 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_491` | `pw.hachimi.client.\u0000iL\u200E` | `hidden#489` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/4 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_492` | `pw.hachimi.client.\u0000jY\u200E` | `hidden#213` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/6 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_493` | `pw.hachimi.client.\u0000iT\u200E` | `hidden#591` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/4 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_494` | `pw.hachimi.client.\u0000mk\u200E` | `hidden#778` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/4 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_495` | `pw.hachimi.client.\u0000mj\u200E` | `hidden#818` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/4 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_496` | `pw.hachimi.client.\u0000ju\u200E` | `hidden#615` | `class_498 / pw.hachimi.client.\u0000ow\u200E` | 1/4 | — | 内部辅助/管理类；主要涉及：移动/玩家状态 | 中 |
+| `class_497` | `pw.hachimi.client.\u0000jn\u200E` | `hidden#477` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/4 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_498` | `pw.hachimi.client.\u0000ow\u200E` | `hidden#092` | `java.lang.Enum` | 10/16 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_499` | `pw.hachimi.client.\u0000kN\u200E` | `hidden#511` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_500` | `pw.hachimi.client.\u0000qF\u200E` | `hidden#220` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_501` | `pw.hachimi.client.\u0000fY\u200E` | `hidden#327` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_502` | `pw.hachimi.client.\u0000eE\u200E` | `hidden#569` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_503` | `pw.hachimi.client.\u0000hv\u200E` | `hidden#626` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 26/40 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_504` | `pw.hachimi.client.\u0000cU\u200E` | `hidden#794` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/7 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_505` | `pw.hachimi.client.\u0000ol\u200E` | `hidden#741` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 19/10 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_506` | `pw.hachimi.client.\u0000pR\u200E` | `hidden#036` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/10 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互 | 中 |
+| `class_507` | `pw.hachimi.client.\u0000hA\u200E` | `hidden#783` | `java.lang.Object` | 2/10 | — | 内部辅助/管理类；主要涉及：方块/世界交互、实体/战斗 | 中 |
+| `class_508` | `pw.hachimi.client.\u0000X\u200E` | `hidden#470` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_509` | `pw.hachimi.client.\u0000cp\u200E` | `hidden#268` | `java.lang.Object` | 2/13 | — | 内部辅助/管理类；主要涉及：实体/战斗 | 中 |
+| `class_510` | `pw.hachimi.client.\u0000kQ\u200E` | `hidden#549` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_511` | `pw.hachimi.client.\u0000aC\u200E` | `hidden#594` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 6/3 | — | 事件对象/事件上下文；领域：渲染/HUD、物品/背包 | 中 |
+| `class_512` | `pw.hachimi.client.\u0000ew\u200E` | `hidden#356` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 15/23 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、移动/玩家状态 | 中 |
+| `class_513` | `pw.hachimi.client.\u0000fO\u200E` | `hidden#237` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_514` | `pw.hachimi.client.\u0000pZ\u200E` | `hidden#067` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/10 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包 | 中 |
+| `class_515` | `pw.hachimi.client.\u0000es\u200E` | `hidden#309` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/4 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_516` | `pw.hachimi.client.\u0000jh\u200E` | `hidden#472` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_517` | `pw.hachimi.client.\u0000pW\u200E` | `hidden#081` | `java.lang.Object` | 5/9 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_518` | `pw.hachimi.client.\u0000gx\u200E` | `hidden#264` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/16 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_519` | `pw.hachimi.client.\u0000hs\u200E` | `hidden#592` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/21 | — | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_520` | `pw.hachimi.client.\u0000ji\u200E` | `hidden#429` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/16 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_521` | `pw.hachimi.client.\u0000qW\u200E` | `hidden#422` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_522` | `pw.hachimi.client.\u0000fI\u200E` | `hidden#109` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_523` | `pw.hachimi.client.\u0000dI\u200E` | `hidden#155` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/12 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_524` | `pw.hachimi.client.\u0000e\u200E` | `hidden#310` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/21 | — | 客户端功能模块实现；行为域：数据包/网络、实体/战斗 | 中 |
+| `class_525` | `pw.hachimi.client.\u0000eB\u200E` | `hidden#484` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_526` | `pw.hachimi.client.\u0000eT\u200E` | `hidden#685` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_527` | `pw.hachimi.client.\u0000iu\u200E` | `hidden#177` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/39 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、方块/世界交互 | 中 |
+| `class_528` | `pw.hachimi.client.\u0000fm\u200E` | `hidden#607` | `java.lang.Enum` | 7/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_529` | `pw.hachimi.client.\u0000eA\u200E` | `hidden#518` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/12 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_530` | `pw.hachimi.client.\u0000kD\u200E` | `hidden#399` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_531` | `pw.hachimi.client.\u0000di\u200E` | `hidden#610` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/18 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、移动/玩家状态 | 中 |
+| `class_532` | `pw.hachimi.client.\u0000ih\u200E` | `hidden#022` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/14 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_533` | `pw.hachimi.client.\u0000dZ\u200E` | `hidden#385` | `java.lang.Object` | 4/15 | — | 内部辅助/管理类；主要涉及：方块/世界交互 | 中 |
+| `class_534` | `pw.hachimi.client.\u0000oi\u200E` | `hidden#752` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 8/13 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_535` | `pw.hachimi.client.\u0000hn\u200E` | `hidden#525` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_536` | `pw.hachimi.client.\u0000i\u200E` | `hidden#257` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 39/50 | ID 0 / 2 methods | 客户端功能模块实现；行为域：物品/背包、方块/世界交互、实体/战斗 | 中 |
+| `class_537` | `pw.hachimi.client.\u0000ie\u200E` | `hidden#042` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_538` | `pw.hachimi.client.\u0000jv\u200E` | `hidden#581` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_539` | `pw.hachimi.client.\u0000A\u200E` | `hidden#103` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/16 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_540` | `pw.hachimi.client.\u0000fM\u200E` | `hidden#154` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 21/20 | ID 26 / 1 methods | 客户端功能模块实现；行为域：物品/背包、方块/世界交互、移动/玩家状态 | 中 |
+| `class_541` | `pw.hachimi.client.\u0000on\u200E` | `hidden#815` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_542` | `pw.hachimi.client.\u0000cm\u200E` | `hidden#224` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/24 | ID 64 / 2 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_543` | `pw.hachimi.client.\u0000qk\u200E` | `hidden#678` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 25/22 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_544` | `pw.hachimi.client.\u0000mB\u200E` | `hidden#275` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_545` | `pw.hachimi.client.\u0000pX\u200E` | `hidden#093` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_546` | `pw.hachimi.client.\u0000pc\u200E` | `hidden#249` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_547` | `pw.hachimi.client.\u0000lv\u200E` | `hidden#520` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_548` | `pw.hachimi.client.\u0000oj\u200E` | `hidden#766` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/22 | — | 客户端功能模块实现；行为域：数据包/网络、实体/战斗、移动/玩家状态 | 中 |
+| `class_549` | `pw.hachimi.client.\u0000fH\u200E` | `hidden#113` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 43/46 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_550` | `pw.hachimi.client.\u0000nB\u200E` | `hidden#705` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_551` | `pw.hachimi.client.\u0000oz\u200E` | `hidden#135` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_552` | `pw.hachimi.client.\u0000jm\u200E` | `hidden#512` | `java.lang.Object` | 2/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_553` | `pw.hachimi.client.\u0000db\u200E` | `hidden#492` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_554` | `pw.hachimi.client.\u0000qH\u200E` | `hidden#301` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 18/29 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、实体/战斗 | 中 |
+| `class_555` | `pw.hachimi.client.\u0000lV\u200E` | `hidden#117` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 45/46 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_556` | `pw.hachimi.client.\u0000ks\u200E` | `hidden#144` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_557` | `pw.hachimi.client.\u0000kw\u200E` | `hidden#204` | `java.lang.Enum` | 9/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_558` | `pw.hachimi.client.\u0000ab\u200E` | `hidden#207` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 31/44 | ID 4 / 3 methods | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_559` | `pw.hachimi.client.\u0000fC\u200E` | `hidden#102` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 27/33 | — | 客户端功能模块实现；行为域：物品/背包、方块/世界交互、实体/战斗 | 中 |
+| `class_560` | `pw.hachimi.client.\u0000dk\u200E` | `hidden#585` | `java.lang.Object` | 2/4 | ID 37 / 1 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_561` | `pw.hachimi.client.\u0000oy\u200E` | `hidden#068` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_562` | `pw.hachimi.client.\u0000dn\u200E` | `hidden#621` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/34 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_563` | `pw.hachimi.client.\u0000qY\u200E` | `hidden#495` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 17/16 | ID 17 / 1 methods | 客户端功能模块实现；行为域：物品/背包、实体/战斗 | 中 |
+| `class_564` | `pw.hachimi.client.\u0000kf\u200E` | `hidden#820` | `java.lang.Object` | 4/12 | — | 自定义 Brigadier 命令参数解析器 | 高 |
+| `class_565` | `pw.hachimi.client.\u0000jP\u200E` | `hidden#145` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 17/21 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包 | 中 |
+| `class_566` | `pw.hachimi.client.\u0000J\u200E` | `hidden#634` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_567` | `pw.hachimi.client.\u0000ms\u200E` | `hidden#095` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_568` | `pw.hachimi.client.\u0000os\u200E` | `hidden#045` | `class_572 / pw.hachimi.client.\u0000md\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_569` | `pw.hachimi.client.\u0000lS\u200E` | `hidden#131` | `class_572 / pw.hachimi.client.\u0000md\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_570` | `pw.hachimi.client.\u0000lJ\u200E` | `hidden#040` | `class_572 / pw.hachimi.client.\u0000md\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_571` | `pw.hachimi.client.\u0000gL\u200E` | `hidden#536` | `class_572 / pw.hachimi.client.\u0000md\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_572` | `pw.hachimi.client.\u0000md\u200E` | `hidden#692` | `java.lang.Enum` | 6/12 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_573` | `pw.hachimi.client.\u0000eD\u200E` | `hidden#555` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_574` | `pw.hachimi.client.\u0000ii\u200E` | `hidden#087` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 30/22 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_575` | `pw.hachimi.client.\u0000nF\u200E` | `hidden#754` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_576` | `pw.hachimi.client.\u0000b\u200E` | `hidden#521` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_577` | `pw.hachimi.client.\u0000dF\u200E` | `hidden#192` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 35/43 | — | 客户端功能模块实现；行为域：数据包/网络、方块/世界交互、实体/战斗 | 中 |
+| `class_578` | `pw.hachimi.client.\u0000kF\u200E` | `hidden#380` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/10 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_579` | `pw.hachimi.client.\u0000gj\u200E` | `hidden#134` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_580` | `pw.hachimi.client.\u0000oN\u200E` | `hidden#377` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：物品/背包 | 中 |
+| `class_581` | `pw.hachimi.client.\u0000lu\u200E` | `hidden#558` | `java.lang.Enum` | 7/9 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_582` | `pw.hachimi.client.\u0000dK\u200E` | `hidden#240` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_583` | `pw.hachimi.client.\u0000mG\u200E` | `hidden#338` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 31/27 | ID 8 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_584` | `pw.hachimi.client.\u0000ir\u200E` | `hidden#179` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/28 | — | 客户端功能模块实现；行为域：命令 | 中 |
+| `class_585` | `pw.hachimi.client.\u0000nL\u200E` | `hidden#779` | `java.lang.Record` | 8/13 | — | 数据载体/Record-like；组件：damageData、attackTarget、damage、selfDamage、blockPos、antiSurround、support | 高 |
+| `class_586` | `pw.hachimi.client.\u0000gF\u200E` | `hidden#481` | `java.lang.Object` | 5/19 | — | 内部辅助/管理类；主要涉及：文件/IO、HTTP/网络 | 中 |
+| `class_587` | `pw.hachimi.client.\u0000jo\u200E` | `hidden#488` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/16 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_588` | `pw.hachimi.client.\u0000qI\u200E` | `hidden#315` | `java.lang.Object` | 3/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_589` | `pw.hachimi.client.\u0000pN\u200E` | `hidden#804` | `java.lang.Object` | 5/11 | — | 内部辅助/管理类；主要涉及：渲染/HUD、方块/世界交互、移动/玩家状态 | 中 |
+| `class_590` | `pw.hachimi.client.\u0000bV\u200E` | `hidden#387` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：pos、damage | 高 |
+| `class_591` | `pw.hachimi.client.\u0000kO\u200E` | `hidden#478` | `java.lang.Enum` | 5/12 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_592` | `pw.hachimi.client.\u0000fs\u200E` | `hidden#637` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：方块/世界交互 | 中 |
+| `class_593` | `pw.hachimi.client.\u0000ag\u200E` | `hidden#255` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_594` | `pw.hachimi.client.\u0000mF\u200E` | `hidden#324` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_595` | `pw.hachimi.client.\u0000nn\u200E` | `hidden#392` | `java.lang.Enum` | 8/13 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_596` | `pw.hachimi.client.\u0000S\u200E` | `hidden#505` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_597` | `pw.hachimi.client.\u0000bs\u200E` | `hidden#732` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_598` | `pw.hachimi.client.\u0000lF\u200E` | `hidden#797` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_599` | `pw.hachimi.client.\u0000dr\u200E` | `hidden#674` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 8/10 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_600` | `pw.hachimi.client.\u0000dR\u200E` | `hidden#283` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_601` | `pw.hachimi.client.\u0000gR\u200E` | `hidden#666` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_602` | `pw.hachimi.client.\u0000fL\u200E` | `hidden#199` | `java.lang.Enum` | 9/16 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_603` | `pw.hachimi.client.\u0000cS\u200E` | `hidden#723` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_604` | `pw.hachimi.client.z` | `visible` | `java.lang.Object` | 0/6 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_605` | `pw.hachimi.client.\u0000pG\u200E` | `hidden#716` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 16/34 | ID 3 / 4 methods | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_606` | `pw.hachimi.client.\u0000pd\u200E` | `hidden#263` | `java.lang.Object` | 3/9 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_607` | `pw.hachimi.client.\u0000ah\u200E` | `hidden#210` | `class_608 / pw.hachimi.client.\u0000iG\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_608` | `pw.hachimi.client.\u0000iG\u200E` | `hidden#446` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_609` | `pw.hachimi.client.\u0000eR\u200E` | `hidden#711` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 121/199 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、物品/背包 | 中 |
+| `class_610` | `pw.hachimi.client.\u0000ok\u200E` | `hidden#730` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/20 | — | 客户端功能模块实现；行为域：渲染/HUD、移动/玩家状态 | 中 |
+| `class_611` | `pw.hachimi.client.\u0000fB\u200E` | `hidden#090` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/12 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_612` | `pw.hachimi.client.\u0000d\u200E` | `hidden#299` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/18 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_613` | `pw.hachimi.client.\u0000jB\u200E` | `hidden#799` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/19 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包 | 中 |
+| `class_614` | `pw.hachimi.client.\u0000D\u200E` | `hidden#713` | `java.lang.Enum` | 6/9 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_615` | `pw.hachimi.client.\u0000f\u200E` | `hidden#269` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 15/16 | — | 客户端功能模块实现；行为域：物品/背包 | 中 |
+| `class_616` | `pw.hachimi.client.\u0000nf\u200E` | `hidden#288` | `java.lang.Object` | 11/5 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_617` | `pw.hachimi.client.\u0000a\u200E` | `hidden#556` | `java.lang.Object` | 5/9 | — | 内部辅助/管理类；主要涉及：渲染/HUD、方块/世界交互、移动/玩家状态 | 中 |
+| `class_618` | `pw.hachimi.client.\u0000U\u200E` | `hidden#483` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/8 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_619` | `pw.hachimi.client.\u0000hY\u200E` | `hidden#265` | `java.lang.Enum` | 6/11 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_620` | `pw.hachimi.client.f` | `visible` | `java.lang.Object` | 0/20 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_621` | `pw.hachimi.client.\u0000as\u200E` | `hidden#410` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 12/4 | — | 事件对象/事件上下文；领域：渲染/HUD、实体/战斗 | 中 |
+| `class_622` | `pw.hachimi.client.\u0000mg\u200E` | `hidden#725` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 53/56 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包、方块/世界交互 | 中 |
+| `class_623` | `pw.hachimi.client.\u0000qd\u200E` | `hidden#593` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_624` | `pw.hachimi.client.\u0000en\u200E` | `hidden#238` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_625` | `pw.hachimi.client.\u0000pO\u200E` | `hidden#816` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 23/32 | ID 6 / 1 methods | 客户端功能模块实现；行为域：方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_626` | `pw.hachimi.client.\u0000lB\u200E` | `hidden#756` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_627` | `pw.hachimi.client.\u0000ml\u200E` | `hidden#788` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：pos、soundEvent | 高 |
+| `class_628` | `pw.hachimi.client.\u0000bS\u200E` | `hidden#397` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 11/16 | — | 客户端功能模块实现；行为域：渲染/HUD、物品/背包 | 中 |
+| `class_629` | `pw.hachimi.client.\u0000iw\u200E` | `hidden#259` | `java.lang.Object` | 9/15 | — | 内部辅助/管理类；主要涉及：物品/背包 | 中 |
+| `class_630` | `pw.hachimi.client.\u0000jU\u200E` | `hidden#163` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_631` | `pw.hachimi.client.\u0000P\u200E` | `hidden#761` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_632` | `pw.hachimi.client.\u0000qU\u200E` | `hidden#448` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 26/22 | ID 22 / 1 methods | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_633` | `pw.hachimi.client.\u0000rk\u200E` | `hidden#300` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/15 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_634` | `pw.hachimi.client.\u0000nU\u200E` | `hidden#058` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_635` | `pw.hachimi.client.\u0000az\u200E` | `hidden#500` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_636` | `pw.hachimi.client.\u0000K\u200E` | `hidden#802` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_637` | `pw.hachimi.client.\u0000nJ\u200E` | `hidden#807` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 6/10 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_638` | `pw.hachimi.client.\u0000gf\u200E` | `hidden#100` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_639` | `pw.hachimi.client.\u0000jO\u200E` | `hidden#132` | `java.lang.Object` | 6/10 | — | 内部辅助/管理类；主要涉及：物品/背包 | 中 |
+| `class_640` | `pw.hachimi.client.\u0000ed\u200E` | `hidden#076` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_641` | `pw.hachimi.client.\u0000of\u200E` | `hidden#717` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 17/29 | ID 63 / 1 methods | 客户端功能模块实现；行为域：物品/背包 | 中 |
+| `class_642` | `pw.hachimi.client.\u0000fA\u200E` | `hidden#026` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_643` | `pw.hachimi.client.\u0000lI\u200E` | `hidden#791` | `class_644 / pw.hachimi.client.\u0000iQ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_644` | `pw.hachimi.client.\u0000iQ\u200E` | `hidden#597` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/6 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_645` | `pw.hachimi.client.\u0000aj\u200E` | `hidden#291` | `java.lang.Enum` | 8/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_646` | `pw.hachimi.client.\u0000pg\u200E` | `hidden#302` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 36/40 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_647` | `pw.hachimi.client.\u0000dQ\u200E` | `hidden#270` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/4 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_648` | `pw.hachimi.client.\u0000bA\u200E` | `hidden#127` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 24/26 | — | 客户端功能模块实现；行为域：物品/背包、方块/世界交互、实体/战斗 | 中 |
+| `class_649` | `pw.hachimi.client.\u0000iV\u200E` | `hidden#665` | `java.lang.Object` | 2/55 | — | 内部辅助/管理类；主要涉及：数据包/网络、物品/背包、方块/世界交互、实体/战斗 | 中 |
+| `class_650` | `pw.hachimi.client.\u0000jN\u200E` | `hidden#073` | `java.lang.Enum` | 8/15 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_651` | `pw.hachimi.client.\u0000fT\u200E` | `hidden#311` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 17/24 | ID 42 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、方块/世界交互 | 中 |
+| `class_652` | `pw.hachimi.client.\u0000kC\u200E` | `hidden#340` | `net.minecraft.class_4185` | 3/5 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_653` | `pw.hachimi.client.mixin.m` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_654` | `pw.hachimi.client.\u0000oE\u200E` | `hidden#316` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_655` | `pw.hachimi.client.\u0000dX\u200E` | `hidden#416` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_656` | `pw.hachimi.client.\u0000fx\u200E` | `hidden#746` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 17/32 | ID 48 / 1 methods | 客户端功能模块实现；行为域：物品/背包、方块/世界交互、移动/玩家状态 | 中 |
+| `class_657` | `pw.hachimi.client.\u0000kx\u200E` | `hidden#161` | `java.lang.Record` | 6/11 | — | 数据载体/Record-like；组件：entity、ticks、playerPos、offset、speed | 高 |
+| `class_658` | `pw.hachimi.client.\u0000ao\u200E` | `hidden#361` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_659` | `pw.hachimi.client.m` | `visible` | `java.lang.Object` | 0/25 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_660` | `pw.hachimi.client.\u0000nu\u200E` | `hidden#509` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 5/18 | ID 55 / 3 methods | 内部辅助/管理类；主要涉及：方块/世界交互 | 中 |
+| `class_661` | `pw.hachimi.client.\u0000g\u200E` | `hidden#280` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_662` | `pw.hachimi.client.\u0000nd\u200E` | `hidden#317` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/12 | — | Brigadier 客户端命令实现 | 高 |
+| `class_663` | `pw.hachimi.client.\u0000nP\u200E` | `hidden#006` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/14 | — | 客户端功能模块实现；行为域：方块/世界交互 | 中 |
+| `class_664` | `pw.hachimi.client.\u0000gw\u200E` | `hidden#307` | `java.lang.Enum` | 3/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_665` | `pw.hachimi.client.\u0000gD\u200E` | `hidden#503` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/11 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_666` | `pw.hachimi.client.\u0000I\u200E` | `hidden#624` | `class_698 / pw.hachimi.client.\u0000hE\u200E` | 1/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_667` | `pw.hachimi.client.\u0000dm\u200E` | `hidden#656` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/10 | — | 客户端功能模块实现；行为域：数据包/网络、移动/玩家状态 | 中 |
+| `class_668` | `pw.hachimi.client.\u0000eX\u200E` | `hidden#739` | `class_747 / pw.hachimi.client.\u0000in\u200E` | 9/20 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_669` | `pw.hachimi.client.\u0000h\u200E` | `hidden#243` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_670` | `pw.hachimi.client.\u0000bm\u200E` | `hidden#714` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 5/11 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_671` | `pw.hachimi.client.\u0000hQ\u200E` | `hidden#153` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/4 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_672` | `pw.hachimi.client.\u0000oF\u200E` | `hidden#274` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_673` | `pw.hachimi.client.\u0000gm\u200E` | `hidden#120` | `Screen` | 12/21 | — | Minecraft GUI Screen/界面实现 | 高 |
+| `class_674` | `pw.hachimi.client.\u0000hr\u200E` | `hidden#573` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_675` | `pw.hachimi.client.\u0000z\u200E` | `hidden#008` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_676` | `pw.hachimi.client.\u0000aE\u200E` | `hidden#648` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_677` | `pw.hachimi.client.\u0000jg\u200E` | `hidden#458` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/8 | — | 事件对象/事件上下文；领域：实体/战斗、移动/玩家状态 | 中 |
+| `class_678` | `pw.hachimi.client.mixin.ae` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_679` | `pw.hachimi.client.mixin.b` | `visible` | `java.lang.Object` | 0/4 | — | Mixin 注入/拦截类 | 高 |
+| `class_680` | `pw.hachimi.client.mixin.aL` | `visible` | `java.lang.Object` | 0/4 | — | Mixin 注入/拦截类 | 高 |
+| `class_681` | `pw.hachimi.client.\u0000fn\u200E` | `hidden#575` | `java.lang.Record` | 10/15 | — | 数据载体/Record-like；组件：x、y、r、g、b、glyph、matrix4f、a、mode | 高 |
+| `class_682` | `pw.hachimi.client.\u0000bx\u200E` | `hidden#032` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_683` | `pw.hachimi.client.\u0000aQ\u200E` | `hidden#795` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_684` | `pw.hachimi.client.\u0000k\u200E` | `hidden#235` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/20 | — | 客户端功能模块实现；行为域：数据包/网络 | 中 |
+| `class_685` | `pw.hachimi.client.w` | `visible` | `java.lang.Object` | 0/8 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_686` | `pw.hachimi.client.\u0000N\u200E` | `hidden#786` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 21/30 | — | 客户端功能模块实现；行为域：渲染/HUD、数据包/网络、物品/背包 | 中 |
+| `class_687` | `pw.hachimi.client.\u0000kY\u200E` | `hidden#652` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 12/14 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_688` | `pw.hachimi.client.\u0000pz\u200E` | `hidden#474` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_689` | `pw.hachimi.client.\u0000l\u200E` | `hidden#404` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 5/18 | ID 49 / 3 methods | 内部辅助/管理类；主要涉及：物品/背包 | 中 |
+| `class_690` | `pw.hachimi.client.\u0000ct\u200E` | `hidden#320` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/20 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_691` | `pw.hachimi.client.ab` | `visible` | `java.lang.Object` | 0/4 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_692` | `pw.hachimi.client.\u0000qc\u200E` | `hidden#578` | `java.lang.Object` | 7/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_693` | `pw.hachimi.client.\u0000oh\u200E` | `hidden#690` | `class_870 / pw.hachimi.client.\u0000hR\u200E` | 3/10 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_694` | `pw.hachimi.client.\u0000kv\u200E` | `hidden#190` | `java.lang.Object` | 8/14 | — | 内部辅助/管理类；主要涉及：数据包/网络、移动/玩家状态 | 中 |
+| `class_695` | `pw.hachimi.client.\u0000au\u200E` | `hidden#388` | `class_880 / pw.hachimi.client.\u0000by\u200E` | 6/18 | ID 47 / 1 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_696` | `pw.hachimi.client.\u0000pH\u200E` | `hidden#680` | `java.lang.Object` | 11/22 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_697` | `pw.hachimi.client.\u0000bv\u200E` | `hidden#774` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_698` | `pw.hachimi.client.\u0000hE\u200E` | `hidden#025` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_699` | `pw.hachimi.client.\u0000kR\u200E` | `hidden#560` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 5/9 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_700` | `pw.hachimi.client.\u0000qB\u200E` | `hidden#158` | `java.lang.Enum` | 8/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_701` | `pw.hachimi.client.\u0000ex\u200E` | `hidden#328` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 14/10 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_702` | `pw.hachimi.client.\u0000gN\u200E` | `hidden#608` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：物品/背包 | 中 |
+| `class_703` | `pw.hachimi.client.\u0000pK\u200E` | `hidden#767` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_704` | `pw.hachimi.client.\u0000pa\u200E` | `hidden#159` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_705` | `pw.hachimi.client.\u0000qK\u200E` | `hidden#286` | `class_747 / pw.hachimi.client.\u0000in\u200E` | 10/25 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_706` | `pw.hachimi.client.\u0000cJ\u200E` | `hidden#659` | `java.lang.Record` | 3/8 | — | 数据载体/Record-like；组件：pos、time | 高 |
+| `class_707` | `pw.hachimi.client.\u0000bj\u200E` | `hidden#622` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_708` | `pw.hachimi.client.\u0000kp\u200E` | `hidden#059` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 7/34 | ID 69 / 3 methods | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_709` | `pw.hachimi.client.\u0000t\u200E` | `hidden#091` | `class_713 / pw.hachimi.client.\u0000jH\u200E` | 1/12 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_710` | `pw.hachimi.client.\u0000x\u200E` | `hidden#038` | `class_713 / pw.hachimi.client.\u0000jH\u200E` | 1/12 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_711` | `pw.hachimi.client.\u0000ds\u200E` | `hidden#686` | `class_713 / pw.hachimi.client.\u0000jH\u200E` | 1/11 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_712` | `pw.hachimi.client.\u0000bI\u200E` | `hidden#211` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 20/23 | ID 33 / 1 methods | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、实体/战斗 | 中 |
+| `class_713` | `pw.hachimi.client.\u0000jH\u200E` | `hidden#012` | `java.lang.Enum` | 5/18 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_714` | `pw.hachimi.client.\u0000j\u200E` | `hidden#212` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 17/20 | — | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_715` | `pw.hachimi.client.\u0000eF\u200E` | `hidden#529` | `java.lang.Object` | 6/16 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_716` | `pw.hachimi.client.\u0000lw\u200E` | `hidden#539` | `java.lang.Object` | 8/8 | — | 内部辅助/管理类；主要涉及：方块/世界交互 | 中 |
+| `class_717` | `pw.hachimi.client.\u0000bX\u200E` | `hidden#466` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/16 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包 | 中 |
+| `class_718` | `pw.hachimi.client.\u0000pS\u200E` | `hidden#029` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_719` | `pw.hachimi.client.\u0000jA\u200E` | `hidden#737` | `java.lang.Object` | 3/10 | — | 内部辅助/管理类；主要涉及：数据包/网络、实体/战斗 | 中 |
+| `class_720` | `pw.hachimi.client.\u0000ef\u200E` | `hidden#149` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_721` | `pw.hachimi.client.\u0000qA\u200E` | `hidden#203` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 39/65 | ID 21 / 1 methods | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_722` | `pw.hachimi.client.\u0000cu\u200E` | `hidden#334` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 8/13 | ID 18 / 1 methods | 客户端功能模块实现；行为域：数据包/网络、实体/战斗 | 中 |
+| `class_723` | `pw.hachimi.client.\u0000qh\u200E` | `hidden#641` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_724` | `pw.hachimi.client.\u0000qo\u200E` | `hidden#728` | `java.lang.Enum` | 4/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_725` | `pw.hachimi.client.\u0000am\u200E` | `hidden#285` | `class_743 / pw.hachimi.client.\u0000rc\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_726` | `pw.hachimi.client.\u0000cM\u200E` | `hidden#695` | `class_743 / pw.hachimi.client.\u0000rc\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_727` | `pw.hachimi.client.\u0000cR\u200E` | `hidden#758` | `class_743 / pw.hachimi.client.\u0000rc\u200E` | 1/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_728` | `pw.hachimi.client.\u0000ba\u200E` | `hidden#531` | `class_743 / pw.hachimi.client.\u0000rc\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_729` | `pw.hachimi.client.\u0000v\u200E` | `hidden#066` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_730` | `pw.hachimi.client.\u0000oG\u200E` | `hidden#289` | `class_731 / pw.hachimi.client.\u0000E\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_731` | `pw.hachimi.client.\u0000E\u200E` | `hidden#675` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_732` | `pw.hachimi.client.\u0000fu\u200E` | `hidden#709` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_733` | `pw.hachimi.client.\u0000jc\u200E` | `hidden#400` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_734` | `pw.hachimi.client.\u0000gv\u200E` | `hidden#294` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_735` | `pw.hachimi.client.\u0000om\u200E` | `hidden#805` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/20 | — | 客户端功能模块实现；行为域：物品/背包、移动/玩家状态 | 中 |
+| `class_736` | `pw.hachimi.client.\u0000aa\u200E` | `hidden#194` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_737` | `pw.hachimi.client.\u0000iW\u200E` | `hidden#627` | `java.lang.Object` | 2/6 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_738` | `pw.hachimi.client.\u0000fe\u200E` | `hidden#482` | `java.lang.Enum` | 6/13 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_739` | `pw.hachimi.client.\u0000fS\u200E` | `hidden#296` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_740` | `pw.hachimi.client.\u0000jI\u200E` | `hidden#023` | `class_781 / pw.hachimi.client.\u0000pB\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_741` | `pw.hachimi.client.\u0000nW\u200E` | `hidden#129` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_742` | `pw.hachimi.client.\u0000mN\u200E` | `hidden#427` | `java.lang.Enum` | 6/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_743` | `pw.hachimi.client.\u0000rc\u200E` | `hidden#187` | `java.lang.Enum` | 6/12 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_744` | `pw.hachimi.client.\u0000mX\u200E` | `hidden#540` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_745` | `pw.hachimi.client.\u0000ou\u200E` | `hidden#016` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_746` | `pw.hachimi.client.\u0000kk\u200E` | `hidden#010` | `class_747 / pw.hachimi.client.\u0000in\u200E` | 28/57 | ID 14 / 1 methods | 内部辅助/管理类；主要涉及：数据包/网络、方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_747` | `pw.hachimi.client.\u0000in\u200E` | `hidden#133` | `class_880 / pw.hachimi.client.\u0000by\u200E` | 2/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_748` | `pw.hachimi.client.\u0000be\u200E` | `hidden#611` | `java.lang.Object` | 2/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_749` | `pw.hachimi.client.\u0000eM\u200E` | `hidden#645` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/14 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_750` | `pw.hachimi.client.\u0000dt\u200E` | `hidden#747` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 5/11 | ID 60 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_751` | `pw.hachimi.client.\u0000bu\u200E` | `hidden#813` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_752` | `pw.hachimi.client.\u0000py\u200E` | `hidden#507` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_753` | `pw.hachimi.client.\u0000dd\u200E` | `hidden#570` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/16 | — | 客户端功能模块实现；行为域：实体/战斗 | 中 |
+| `class_754` | `pw.hachimi.client.q` | `visible` | `java.lang.Object` | 0/10 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_755` | `pw.hachimi.client.\u0000bb\u200E` | `hidden#544` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 42/50 | — | 客户端功能模块实现；行为域：实体/战斗、移动/玩家状态 | 中 |
+| `class_756` | `pw.hachimi.client.\u0000gT\u200E` | `hidden#638` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 10/29 | ID 68 / 2 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_757` | `pw.hachimi.client.r` | `visible` | `java.lang.Object` | 0/9 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_758` | `pw.hachimi.client.\u0000qq\u200E` | `hidden#803` | `java.util.concurrent.ConcurrentLinkedDeque` | 3/7 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_759` | `pw.hachimi.client.\u0000nt\u200E` | `hidden#497` | `java.lang.Object` | 7/16 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_760` | `pw.hachimi.client.\u0000nk\u200E` | `hidden#407` | `java.lang.Object` | 1/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_761` | `pw.hachimi.client.\u0000nO\u200E` | `hidden#051` | `class_767 / pw.hachimi.client.\u0000bh\u200E` | 1/11 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_762` | `pw.hachimi.client.\u0000dJ\u200E` | `hidden#170` | `class_767 / pw.hachimi.client.\u0000bh\u200E` | 1/11 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_763` | `pw.hachimi.client.\u0000ey\u200E` | `hidden#342` | `class_767 / pw.hachimi.client.\u0000bh\u200E` | 1/11 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_764` | `pw.hachimi.client.\u0000nM\u200E` | `hidden#789` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 56/68 | — | 客户端功能模块实现；行为域：渲染/HUD、方块/世界交互、实体/战斗 | 中 |
+| `class_765` | `pw.hachimi.client.\u0000qn\u200E` | `hidden#765` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/13 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_766` | `pw.hachimi.client.\u0000oS\u200E` | `hidden#425` | `class_767 / pw.hachimi.client.\u0000bh\u200E` | 1/11 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_767` | `pw.hachimi.client.\u0000bh\u200E` | `hidden#647` | `java.lang.Enum` | 6/19 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_768` | `pw.hachimi.client.\u0000dh\u200E` | `hidden#601` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 7/16 | ID 71 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_769` | `pw.hachimi.client.\u0000oZ\u200E` | `hidden#566` | `java.lang.Object` | 13/15 | ID 25 / 2 methods | 内部辅助/管理类；主要涉及：文件/IO | 中 |
+| `class_770` | `pw.hachimi.client.\u0000aJ\u200E` | `hidden#706` | `java.lang.Enum` | 5/10 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_771` | `pw.hachimi.client.\u0000eP\u200E` | `hidden#640` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_772` | `pw.hachimi.client.\u0000rd\u200E` | `hidden#202` | `java.lang.Thread` | 5/9 | — | 后台工作线程 | 高 |
+| `class_773` | `pw.hachimi.client.\u0000mE\u200E` | `hidden#365` | `java.lang.Enum` | 5/8 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_774` | `pw.hachimi.client.\u0000mo\u200E` | `hidden#007` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 9/24 | ID 30 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_775` | `pw.hachimi.client.\u0000kE\u200E` | `hidden#413` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_776` | `pw.hachimi.client.\u0000fE\u200E` | `hidden#077` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 20/36 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_777` | `pw.hachimi.client.\u0000hX\u200E` | `hidden#308` | `class_883 / pw.hachimi.client.\u0000mZ\u200E` | 5/11 | — | Brigadier 客户端命令实现 | 高 |
+| `class_778` | `pw.hachimi.client.d` | `visible` | `java.lang.Object` | 0/19 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_779` | `pw.hachimi.client.l` | `visible` | `java.lang.Object` | 0/17 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_780` | `pw.hachimi.client.\u0000cD\u200E` | `hidden#606` | `class_781 / pw.hachimi.client.\u0000pB\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_781` | `pw.hachimi.client.\u0000pB\u200E` | `hidden#650` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_782` | `pw.hachimi.client.\u0000qw\u200E` | `hidden#043` | `java.lang.Object` | 8/8 | ID 11 / 1 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_783` | `pw.hachimi.client.\u0000bJ\u200E` | `hidden#226` | `java.lang.Object` | 4/10 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_784` | `pw.hachimi.client.\u0000fU\u200E` | `hidden#267` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 16/23 | ID 20 / 2 methods | 客户端功能模块实现；行为域：数据包/网络、物品/背包 | 中 |
+| `class_785` | `pw.hachimi.client.\u0000cO\u200E` | `hidden#677` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_786` | `pw.hachimi.client.\u0000eW\u200E` | `hidden#721` | `java.lang.Object` | 2/46 | — | 内部辅助/管理类；主要涉及：物品/背包、方块/世界交互、实体/战斗、移动/玩家状态 | 中 |
+| `class_787` | `pw.hachimi.client.j` | `visible` | `java.lang.Object` | 0/17 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_788` | `pw.hachimi.client.\u0000qM\u200E` | `hidden#368` | `java.lang.Object` | 6/9 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_789` | `pw.hachimi.client.\u0000pv\u200E` | `hidden#423` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_790` | `pw.hachimi.client.\u0000bE\u200E` | `hidden#156` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_791` | `pw.hachimi.client.a` | `visible` | `java.lang.Object` | 0/24 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_792` | `pw.hachimi.client.\u0000bF\u200E` | `hidden#172` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_793` | `pw.hachimi.client.u` | `visible` | `java.lang.Object` | 0/8 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_794` | `pw.hachimi.client.\u0000ci\u200E` | `hidden#171` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_795` | `pw.hachimi.client.\u0000aR\u200E` | `hidden#808` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_796` | `pw.hachimi.client.\u0000gJ\u200E` | `hidden#564` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_797` | `pw.hachimi.client.\u0000qz\u200E` | `hidden#079` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_798` | `pw.hachimi.client.\u0000hi\u200E` | `hidden#480` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_799` | `pw.hachimi.client.\u0000an\u200E` | `hidden#347` | `class_879 / pw.hachimi.client.\u0000kV\u200E` | 1/4 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_800` | `pw.hachimi.client.n` | `visible` | `java.lang.Object` | 0/17 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_801` | `pw.hachimi.client.\u0000bl\u200E` | `hidden#696` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 2/3 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_802` | `pw.hachimi.client.\u0000qV\u200E` | `hidden#462` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 22/18 | ID 56 / 1 methods | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_803` | `pw.hachimi.client.\u0000pI\u200E` | `hidden#691` | `java.lang.Object` | 5/9 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_804` | `pw.hachimi.client.\u0000ly\u200E` | `hidden#613` | `class_805 / pw.hachimi.client.\u0000kb\u200E` | 19/27 | — | 客户端功能模块实现；行为域：数据包/网络、物品/背包、实体/战斗 | 中 |
+| `class_805` | `pw.hachimi.client.\u0000kb\u200E` | `hidden#762` | `class_806 / pw.hachimi.client.\u0000ot\u200E` | 6/22 | — | 面向玩家筛选/目标选择的模块二级基类，包含 PlayerEntity 选择与距离/条件判断 | 中-高 |
+| `class_806` | `pw.hachimi.client.\u0000ot\u200E` | `hidden#002` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 4/12 | — | 模块二级基类：继承 Module 基类并增加坐标/数值状态 | 中 |
+| `class_807` | `pw.hachimi.client.\u0000lH\u200E` | `hidden#780` | `java.lang.Object` | 4/14 | ID 35 / 5 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_808` | `pw.hachimi.client.\u0000mQ\u200E` | `hidden#498` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 13/39 | — | 客户端功能模块实现；行为域：渲染/HUD | 中 |
+| `class_809` | `pw.hachimi.client.\u0000bk\u200E` | `hidden#632` | `class_810 / pw.hachimi.client.\u0000aU\u200E` | 3/5 | — | 事件对象/事件上下文；领域：渲染/HUD | 中 |
+| `class_810` | `pw.hachimi.client.\u0000aU\u200E` | `hidden#034` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 带 DrawContext 的渲染事件基类 | 高 |
+| `class_811` | `pw.hachimi.client.\u0000fc\u200E` | `hidden#504` | `java.lang.Object` | 5/19 | ID 7 / 1 methods | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_812` | `pw.hachimi.client.\u0000fj\u200E` | `hidden#527` | `class_910 / pw.hachimi.client.\u0000jl\u200E` | 11/18 | — | 内部辅助/管理类；主要涉及：移动/玩家状态、JSON/配置 | 中 |
+| `class_813` | `pw.hachimi.client.\u0000hB\u200E` | `hidden#031` | `java.lang.Object` | 4/13 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_814` | `pw.hachimi.client.\u0000hV\u200E` | `hidden#227` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_815` | `pw.hachimi.client.\u0000lg\u200E` | `hidden#409` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_816` | `pw.hachimi.client.\u0000cd\u200E` | `hidden#126` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 5/7 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_817` | `pw.hachimi.client.\u0000oB\u200E` | `hidden#222` | `java.lang.Object` | 3/15 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_818` | `pw.hachimi.client.y` | `visible` | `java.lang.Object` | 0/8 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_819` | `pw.hachimi.client.\u0000lx\u200E` | `hidden#604` | `java.lang.Object` | 24/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_820` | `pw.hachimi.client.\u0000ls\u200E` | `hidden#487` | `java.lang.Object` | 9/12 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_821` | `pw.hachimi.eventbus.annotation.EventListener` | `visible` | `java.lang.Object` | 0/2 | — | 事件总线监听器注解 | 高 |
+| `class_822` | `pw.hachimi.client.\u0000cz\u200E` | `hidden#449` | `class_824 / pw.hachimi.client.\u0000lX\u200E` | 3/5 | — | 事件对象/事件上下文；领域：数据包/网络 | 中 |
+| `class_823` | `pw.hachimi.client.\u0000pj\u200E` | `hidden#287` | `class_824 / pw.hachimi.client.\u0000lX\u200E` | 3/5 | — | 事件对象/事件上下文；领域：数据包/网络 | 中 |
+| `class_824` | `pw.hachimi.client.\u0000lX\u200E` | `hidden#205` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/5 | — | 事件对象/事件上下文；领域：数据包/网络 | 中 |
+| `class_825` | `pw.hachimi.client.\u0000dH\u200E` | `hidden#201` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 2/3 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_826` | `pw.hachimi.client.\u0000aq\u200E` | `hidden#336` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 4/6 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_827` | `pw.hachimi.client.\u0000is\u200E` | `hidden#196` | `java.lang.Object` | 4/7 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_828` | `pw.hachimi.client.\u0000gu\u200E` | `hidden#228` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_829` | `pw.hachimi.client.\u0000pM\u200E` | `hidden#742` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_830` | `pw.hachimi.client.\u0000aW\u200E` | `hidden#005` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_831` | `pw.hachimi.client.p` | `visible` | `java.lang.Object` | 0/9 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_832` | `pw.hachimi.client.\u0000cW\u200E` | `hidden#775` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_833` | `pw.hachimi.client.\u0000cY\u200E` | `hidden#033` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_834` | `pw.hachimi.client.\u0000ar\u200E` | `hidden#398` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_835` | `pw.hachimi.client.x` | `visible` | `java.lang.Object` | 0/8 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_836` | `pw.hachimi.client.\u0000ak\u200E` | `hidden#306` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_837` | `pw.hachimi.client.\u0000hj\u200E` | `hidden#491` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_838` | `pw.hachimi.client.k` | `visible` | `java.lang.Object` | 0/10 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_839` | `pw.hachimi.client.\u0000qD\u200E` | `hidden#250` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_840` | `pw.hachimi.client.\u0000Q\u200E` | `hidden#726` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_841` | `pw.hachimi.client.\u0000qg\u200E` | `hidden#629` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_842` | `pw.hachimi.client.aa` | `visible` | `java.lang.Object` | 0/4 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_843` | `pw.hachimi.client.\u0000io\u200E` | `hidden#146` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_844` | `pw.hachimi.client.\u0000qb\u200E` | `hidden#612` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_845` | `pw.hachimi.client.g` | `visible` | `java.lang.Object` | 0/14 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_846` | `pw.hachimi.client.\u0000fV\u200E` | `hidden#281` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_847` | `pw.hachimi.client.\u0000cy\u200E` | `hidden#386` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_848` | `pw.hachimi.client.c` | `visible` | `java.lang.Object` | 0/20 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_849` | `pw.hachimi.client.\u0000dM\u200E` | `hidden#209` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_850` | `pw.hachimi.client.\u0000cA\u200E` | `hidden#571` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_851` | `pw.hachimi.client.b` | `visible` | `java.lang.Object` | 0/20 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_852` | `pw.hachimi.client.\u0000pk\u200E` | `hidden#355` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_853` | `pw.hachimi.client.\u0000eZ\u200E` | `hidden#811` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_854` | `pw.hachimi.client.e` | `visible` | `java.lang.Object` | 0/21 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_855` | `pw.hachimi.client.\u0000kg\u200E` | `hidden#781` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_856` | `pw.hachimi.client.t` | `visible` | `java.lang.Object` | 0/7 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_857` | `pw.hachimi.client.\u0000gP\u200E` | `hidden#583` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_858` | `pw.hachimi.client.\u0000qx\u200E` | `hidden#000` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_859` | `pw.hachimi.client.\u0000hm\u200E` | `hidden#562` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_860` | `pw.hachimi.client.i` | `visible` | `java.lang.Object` | 0/19 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_861` | `pw.hachimi.client.\u0000jr\u200E` | `hidden#523` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_862` | `pw.hachimi.client.\u0000jy\u200E` | `hidden#663` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_863` | `pw.hachimi.client.\u0000mc\u200E` | `hidden#682` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_864` | `pw.hachimi.client.\u0000iY\u200E` | `hidden#698` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_865` | `pw.hachimi.client.h` | `visible` | `java.lang.Object` | 0/12 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_866` | `pw.hachimi.client.\u0000jS\u200E` | `hidden#180` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/4 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_867` | `pw.hachimi.client.o` | `visible` | `java.lang.Object` | 0/11 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_868` | `pw.hachimi.client.\u0000iX\u200E` | `hidden#636` | `class_870 / pw.hachimi.client.\u0000hR\u200E` | 2/8 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_869` | `pw.hachimi.client.\u0000iI\u200E` | `hidden#515` | `java.lang.Object` | 5/6 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_870` | `pw.hachimi.client.\u0000hR\u200E` | `hidden#168` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 5/13 | ID 58 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_871` | `pw.hachimi.client.\u0000F\u200E` | `hidden#688` | `class_908 / pw.hachimi.client.\u0000qt\u200E` | 5/16 | ID 67 / 3 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_872` | `pw.hachimi.client.\u0000nH\u200E` | `hidden#727` | `java.lang.Object` | 10/21 | ID 5 / 3 methods | 可执行动作型配置项（含 Runnable）/按钮式 Setting | 中-高 |
+| `class_873` | `pw.hachimi.client.\u0000aX\u200E` | `hidden#019` | `class_874 / pw.hachimi.client.\u0000re\u200E` | 7/12 | — | 客户端功能模块实现；行为域：具体功能名被字符串加密隐藏 | 中-低 |
+| `class_874` | `pw.hachimi.client.\u0000re\u200E` | `hidden#164` | `class_880 / pw.hachimi.client.\u0000by\u200E` | 13/32 | — | 模块系统核心基类（Module-like） | 高 |
+| `class_875` | `pw.hachimi.client.\u0000lp\u200E` | `hidden#499` | `java.lang.Object` | 0/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_876` | `pw.hachimi.client.\u0000rm\u200E` | `hidden#276` | `class_877 / pw.hachimi.client.\u0000lQ\u200E` | 1/5 | — | `lQ` 枚举常量的匿名专用实现 | 高 |
+| `class_877` | `pw.hachimi.client.\u0000lQ\u200E` | `hidden#060` | `java.lang.Enum` | 31/38 | — | 大型枚举基类；其 29 个匿名子类是枚举常量专用实现 | 高 |
+| `class_878` | `pw.hachimi.client.\u0000bO\u200E` | `hidden#348` | `java.lang.Object` | 9/31 | — | 内部辅助/管理类；主要涉及：数据包/网络 | 中 |
+| `class_879` | `pw.hachimi.client.\u0000kV\u200E` | `hidden#616` | `java.lang.Enum` | 10/16 | — | 枚举：模式/类别/状态选项（枚举常量名称多数已加密） | 中 |
+| `class_880` | `pw.hachimi.client.\u0000by\u200E` | `hidden#047` | `class_910 / pw.hachimi.client.\u0000jl\u200E` | 10/21 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_881` | `pw.hachimi.client.\u0000eU\u200E` | `hidden#748` | `java.lang.Object` | 6/35 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_882` | `pw.hachimi.client.\u0000nb\u200E` | `hidden#236` | `java.lang.Object` | 0/2 | — | 内部辅助/管理类；主要涉及：渲染/HUD | 中 |
+| `class_883` | `pw.hachimi.client.\u0000mZ\u200E` | `hidden#614` | `java.lang.Object` | 6/16 | — | Brigadier 命令基类/命令注册抽象 | 高 |
+| `class_884` | `pw.hachimi.client.\u0000mw\u200E` | `hidden#143` | `java.lang.Object` | 2/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_885` | `pw.hachimi.client.\u0000ca\u200E` | `hidden#141` | `java.lang.Object` | 0/2 | — | 内部辅助/管理类；主要涉及：数据包/网络 | 中 |
+| `class_886` | `pw.hachimi.client.mixin.x` | `visible` | `java.lang.Object` | 0/4 | — | Mixin 注入/拦截类 | 高 |
+| `class_887` | `pw.hachimi.client.mixin.e` | `visible` | `java.lang.Object` | 0/4 | — | Mixin 注入/拦截类 | 高 |
+| `class_888` | `pw.hachimi.client.mixin.ab` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_889` | `pw.hachimi.client.mixin.O` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_890` | `pw.hachimi.client.mixin.aA` | `visible` | `java.lang.Object` | 0/3 | — | Mixin 注入/拦截类 | 高 |
+| `class_891` | `pw.hachimi.client.mixin.bi` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_892` | `pw.hachimi.client.\u0000iZ\u200E` | `hidden#708` | `java.lang.Object` | 11/21 | ID 45 / 2 methods | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_893` | `pw.hachimi.satin.Checks` | `visible` | `java.lang.Object` | 0/5 | — | 运行权限/版本检查 | 高 |
+| `class_894` | `pw.hachimi.client.\u0000lk\u200E` | `hidden#456` | `java.lang.Object` | 0/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_895` | `pw.hachimi.client.mixin.bk` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_896` | `pw.hachimi.client.mixin.aw` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_897` | `pw.hachimi.client.mixin.c` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_898` | `pw.hachimi.client.mixin.aZ` | `visible` | `java.lang.Object` | 0/7 | — | Mixin 注入/拦截类 | 高 |
+| `class_899` | `pw.hachimi.client.\u0000fX\u200E` | `hidden#357` | `java.lang.Object` | 0/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_900` | `pw.hachimi.client.mixin.F` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_901` | `pw.hachimi.client.\u0000ad\u200E` | `hidden#157` | `java.lang.Object` | 0/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_902` | `pw.hachimi.client.\u0000ja\u200E` | `hidden#326` | `java.lang.Object` | 0/2 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_903` | `pw.hachimi.client.\u0000gZ\u200E` | `hidden#764` | `java.lang.Object` | 7/20 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_904` | `pw.hachimi.client.\u0000eN\u200E` | `hidden#657` | `java.lang.Object` | 0/10 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_905` | `pw.hachimi.client.\u0000W\u200E` | `hidden#454` | `java.lang.Object` | 0/1 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_906` | `pw.hachimi.client.v` | `visible` | `java.lang.Object` | 0/10 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_907` | `pw.hachimi.client.\u0000kG\u200E` | `hidden#396` | `java.lang.Object` | 1/5 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_908` | `pw.hachimi.client.\u0000qt\u200E` | `hidden#768` | `java.lang.Object` | 12/29 | ID 59 / 2 methods | 配置项/Setting 基类：持有名称、值、默认值、Supplier，并支持 Gson JSON 序列化 | 高 |
+| `class_909` | `pw.hachimi.local.NativeBridge` | `visible` | `java.lang.Object` | 4/3 | — | Windows JNA 本地桥：定位 PhantomShield 模块、装载 512B key table，并修改本地代码页后刷新指令缓存 | 高 |
+| `class_910` | `pw.hachimi.client.\u0000jl\u200E` | `hidden#514` | `java.lang.Object` | 10/24 | ID 1 / 4 methods | 配置项注册表/配置容器：管理多个 Setting，并负责 JSON 导入导出 | 高 |
+| `class_911` | `pw.hachimi.client.\u0000ix\u200E` | `hidden#214` | `java.lang.Object` | 0/3 | — | JSON 可序列化/反序列化接口 | 高 |
+| `class_912` | `pw.hachimi.client.\u0000hS\u200E` | `hidden#247` | `java.lang.Object` | 0/2 | — | 可命名对象接口（核心方法返回 String） | 中 |
+| `class_913` | `pw.hachimi.client.s` | `visible` | `java.lang.Object` | 0/10 | — | 启动/注册分片：自身几乎无字段，按多个无参方法分批触发隐藏类初始化/注册 | 中-高 |
+| `class_914` | `pw.hachimi.client.af` | `visible` | `java.lang.Object` | 6/25 | — | invokedynamic/反射解析与字符串解密运行时；负责字段/方法句柄与 CallSite | 高 |
+| `class_915` | `pw.hachimi.client.ad` | `visible` | `java.lang.Object` | 6/17 | — | 混淆运行时状态组合器/缓存器，实现 ac | 高 |
+| `class_916` | `pw.hachimi.client.ae` | `visible` | `java.lang.Object` | 14/23 | — | 混淆运行时密钥状态生成器；为每类静态解密种子提供 64-bit 派生值 | 高 |
+| `class_917` | `pw.hachimi.client.ac` | `visible` | `java.lang.Object` | 0/6 | — | 混淆运行时接口：64-bit 状态/密钥调度抽象 | 高 |
+| `class_918` | `pw.hachimi.client.\u0000my\u200E` | `hidden#123` | `class_919 / pw.hachimi.client.\u0000nZ\u200E` | 3/7 | — | 事件对象/事件上下文；领域：具体事件类型需运行时字符串/调用点确认 | 中-低 |
+| `class_919` | `pw.hachimi.client.\u0000nZ\u200E` | `hidden#124` | `java.lang.Object` | 6/14 | — | 事件系统核心基类（Event-like），大量具体事件继承于此 | 高 |
+| `class_920` | `pw.hachimi.client.mixin.bs` | `visible` | `java.lang.Object` | 0/3 | — | Mixin 注入/拦截类 | 高 |
+| `class_921` | `pw.hachimi.client.mixin.ar` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_922` | `pw.hachimi.client.\u0000bT\u200E` | `hidden#411` | `java.lang.Object` | 0/2 | — | 内部辅助/管理类；主要涉及：方块/世界交互、实体/战斗 | 中 |
+| `class_923` | `pw.hachimi.client.mixin.I` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_924` | `pw.hachimi.client.mixin.Q` | `visible` | `java.lang.Object` | 0/3 | — | Mixin 注入/拦截类 | 高 |
+| `class_925` | `pw.hachimi.client.\u0000iq\u200E` | `hidden#119` | `java.lang.Object` | 0/3 | — | 内部辅助类/值对象/适配器；精确业务名受混淆影响 | 低 |
+| `class_926` | `pw.hachimi.client.mixin.bD` | `visible` | `java.lang.Object` | 0/2 | — | Mixin 注入/拦截类 | 高 |
+| `class_927` | `pw.hachimi.client.mixin.S` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+| `class_928` | `pw.hachimi.client.mixin.az` | `visible` | `java.lang.Object` | 0/1 | — | Mixin 注入/拦截类 | 高 |
+
+## 6. 可见 Mixin 类
+
+下面单列正常文件名下的 Mixin。由于注入方法名和 target 也存在 intermediary/混淆，本文列出其直接引用的 Minecraft 类型作为定位线索。
+
+| mapping | Mixin class | 主要 Minecraft 类型引用 |
+|---:|---|---|
+| `class_70` | `pw.hachimi.client.mixin.ba` | （未从常量池直接解析出） |
+| `class_71` | `pw.hachimi.client.mixin.an` | （未从常量池直接解析出） |
+| `class_73` | `pw.hachimi.client.mixin.ah` | （未从常量池直接解析出） |
+| `class_74` | `pw.hachimi.client.mixin.aN` | （未从常量池直接解析出） |
+| `class_76` | `pw.hachimi.client.mixin.bB` | （未从常量池直接解析出） |
+| `class_77` | `pw.hachimi.client.mixin.bO` | （未从常量池直接解析出） |
+| `class_78` | `pw.hachimi.client.mixin.bf` | （未从常量池直接解析出） |
+| `class_88` | `pw.hachimi.client.mixin.aE` | （未从常量池直接解析出） |
+| `class_94` | `pw.hachimi.client.mixin.bT` | （未从常量池直接解析出） |
+| `class_95` | `pw.hachimi.client.mixin.q` | （未从常量池直接解析出） |
+| `class_96` | `pw.hachimi.client.mixin.aB` | （未从常量池直接解析出） |
+| `class_97` | `pw.hachimi.client.mixin.bK` | （未从常量池直接解析出） |
+| `class_98` | `pw.hachimi.client.mixin.aP` | （未从常量池直接解析出） |
+| `class_99` | `pw.hachimi.client.mixin.bh` | （未从常量池直接解析出） |
+| `class_115` | `pw.hachimi.client.mixin.K` | （未从常量池直接解析出） |
+| `class_116` | `pw.hachimi.client.mixin.R` | （未从常量池直接解析出） |
+| `class_120` | `pw.hachimi.client.mixin.aI` | （未从常量池直接解析出） |
+| `class_126` | `pw.hachimi.client.mixin.f` | （未从常量池直接解析出） |
+| `class_131` | `pw.hachimi.client.mixin.ad` | （未从常量池直接解析出） |
+| `class_140` | `pw.hachimi.client.mixin.al` | class_286 |
+| `class_141` | `pw.hachimi.client.mixin.bN` | （未从常量池直接解析出） |
+| `class_142` | `pw.hachimi.client.mixin.ap` | （未从常量池直接解析出） |
+| `class_143` | `pw.hachimi.client.mixin.be` | （未从常量池直接解析出） |
+| `class_146` | `pw.hachimi.client.mixin.br` | （未从常量池直接解析出） |
+| `class_147` | `pw.hachimi.client.mixin.T` | （未从常量池直接解析出） |
+| `class_148` | `pw.hachimi.client.mixin.aM` | （未从常量池直接解析出） |
+| `class_149` | `pw.hachimi.client.mixin.bn` | （未从常量池直接解析出） |
+| `class_150` | `pw.hachimi.client.mixin.bc` | （未从常量池直接解析出） |
+| `class_163` | `pw.hachimi.client.mixin.s` | （未从常量池直接解析出） |
+| `class_172` | `pw.hachimi.client.mixin.j` | （未从常量池直接解析出） |
+| `class_198` | `pw.hachimi.client.mixin.bb` | （未从常量池直接解析出） |
+| `class_223` | `pw.hachimi.client.mixin.aC` | （未从常量池直接解析出） |
+| `class_653` | `pw.hachimi.client.mixin.m` | （未从常量池直接解析出） |
+| `class_678` | `pw.hachimi.client.mixin.ae` | （未从常量池直接解析出） |
+| `class_679` | `pw.hachimi.client.mixin.b` | （未从常量池直接解析出） |
+| `class_680` | `pw.hachimi.client.mixin.aL` | （未从常量池直接解析出） |
+| `class_886` | `pw.hachimi.client.mixin.x` | （未从常量池直接解析出） |
+| `class_887` | `pw.hachimi.client.mixin.e` | （未从常量池直接解析出） |
+| `class_888` | `pw.hachimi.client.mixin.ab` | （未从常量池直接解析出） |
+| `class_889` | `pw.hachimi.client.mixin.O` | （未从常量池直接解析出） |
+| `class_890` | `pw.hachimi.client.mixin.aA` | （未从常量池直接解析出） |
+| `class_891` | `pw.hachimi.client.mixin.bi` | （未从常量池直接解析出） |
+| `class_895` | `pw.hachimi.client.mixin.bk` | （未从常量池直接解析出） |
+| `class_896` | `pw.hachimi.client.mixin.aw` | （未从常量池直接解析出） |
+| `class_897` | `pw.hachimi.client.mixin.c` | （未从常量池直接解析出） |
+| `class_898` | `pw.hachimi.client.mixin.aZ` | （未从常量池直接解析出） |
+| `class_900` | `pw.hachimi.client.mixin.F` | （未从常量池直接解析出） |
+| `class_920` | `pw.hachimi.client.mixin.bs` | （未从常量池直接解析出） |
+| `class_921` | `pw.hachimi.client.mixin.ar` | （未从常量池直接解析出） |
+| `class_923` | `pw.hachimi.client.mixin.I` | （未从常量池直接解析出） |
+| `class_924` | `pw.hachimi.client.mixin.Q` | （未从常量池直接解析出） |
+| `class_926` | `pw.hachimi.client.mixin.bD` | （未从常量池直接解析出） |
+| `class_927` | `pw.hachimi.client.mixin.S` | （未从常量池直接解析出） |
+| `class_928` | `pw.hachimi.client.mixin.az` | （未从常量池直接解析出） |
+
+## 7. Native-backed Hachimi 类索引
+
+下面只列 `pw.hachimi.client.*`。`mapping` 为 `—` 时，表示该类只在 native mapping 中出现，无法与当前 JPI workspace 的 `class_N` 一一对应。
+
+| Reg ID | mapping | 原始类名 | native 方法数 | native 方法 | 额外功能线索 |
+|---:|---|---|---:|---|---|
+| 0 | `class_536` | `pw.hachimi.client.\u0000i\u200E` | 2 | `B\u200E(Lnet/minecraft/class_1297;DZJ)Z`<br>`C\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 实体/战斗回调 |
+| 1 | `class_910` | `pw.hachimi.client.\u0000jl\u200E` | 4 | `OI\u200E(JLpw/hachimi/client/\u0000qt\u200E;)Lpw/hachimi/client/\u0000qt\u200E;`<br>`LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`OM\u200E(Lcom/google/gson/JsonObject;J)Lpw/hachimi/client/\u0000qt\u200E;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/配置序列化 |
+| 2 | `class_17` | `pw.hachimi.client.\u0000V\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`bC\u200E(JLcom/google/gson/JsonObject;)Lpw/hachimi/client/\u0000V\u200E;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/配置序列化 |
+| 3 | `class_605` | `pw.hachimi.client.\u0000pG\u200E` | 4 | `aqz\u200E(Lpw/hachimi/client/\u0000mY\u200E;)V`<br>`aqB\u200E(JLnet/minecraft/class_243;Lnet/minecraft/class_243;)Lnet/minecraft/class_243;`<br>`aqE\u200E(Lpw/hachimi/client/\u0000nz\u200E;)V`<br>`aqF\u200E(Lpw/hachimi/client/\u0000pw\u200E;)V` | 向量/移动计算 |
+| 4 | `class_558` | `pw.hachimi.client.\u0000ab\u200E` | 3 | `ca\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`<br>`cb\u200E(Lpw/hachimi/client/\u0000pj\u200E;)V`<br>`cc\u200E(Lnet/minecraft/class_1297;J)V` | 实体/战斗回调 |
+| 5 | `class_872` | `pw.hachimi.client.\u0000nH\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`agy\u200E(Lcom/google/gson/JsonObject;J)Lpw/hachimi/client/\u0000nH\u200E;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/配置序列化 |
+| 6 | `class_625` | `pw.hachimi.client.\u0000pO\u200E` | 1 | `arA\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 7 | `class_811` | `pw.hachimi.client.\u0000fc\u200E` | 1 | `wV\u200E(J)V` | native 核心逻辑（需结合调用图继续命名） |
+| 8 | `class_583` | `pw.hachimi.client.\u0000mG\u200E` | 1 | `acf\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V` | 内部事件/上下文回调 |
+| 9 | `class_138` | `pw.hachimi.client.\u0000km\u200E` | 1 | `Tn\u200E(J)V` | native 核心逻辑（需结合调用图继续命名） |
+| 10 | `class_42` | `pw.hachimi.client.\u0000he\u200E` | 3 | `EZ\u200E(J)V`<br>`Fg\u200E(Lnet/minecraft/class_2338;Lnet/minecraft/class_2350;JLnet/minecraft/class_1268;ZZ)V`<br>`Fq\u200E(Lnet/minecraft/class_1297;IDZZSS)Z` | 实体/战斗回调 |
+| 11 | `class_782` | `pw.hachimi.client.\u0000qw\u200E` | 1 | `atK\u200E(J)V` | native 核心逻辑（需结合调用图继续命名） |
+| 12 | `class_155` | `pw.hachimi.client.\u0000cN\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 13 | `class_487` | `pw.hachimi.client.\u0000qe\u200E` | 1 | `asj\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 14 | `class_746` | `pw.hachimi.client.\u0000kk\u200E` | 1 | `Sr\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V` | 内部事件/上下文回调 |
+| 15 | `class_383` | `pw.hachimi.client.\u0000lY\u200E` | 3 | `ZL\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`<br>`ZN\u200E(IJ)V`<br>`ZO\u200E(Lpw/hachimi/client/\u0000pH\u200E;)V` | 内部事件/上下文回调 |
+| 16 | `class_398` | `pw.hachimi.client.\u0000ay\u200E` | 1 | `dN\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 17 | `class_563` | `pw.hachimi.client.\u0000qY\u200E` | 1 | `avD\u200E(Lpw/hachimi/client/\u0000iy\u200E;)V` | native 核心逻辑（需结合调用图继续命名） |
+| 18 | `class_722` | `pw.hachimi.client.\u0000cu\u200E` | 1 | `ld\u200E(Lpw/hachimi/client/\u0000mu\u200E;)V` | native 核心逻辑（需结合调用图继续命名） |
+| 19 | `class_152` | `pw.hachimi.client.\u0000cc\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 20 | `class_784` | `pw.hachimi.client.\u0000fU\u200E` | 2 | `AP\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`<br>`AQ\u200E(IILnet/minecraft/class_6880;)Z` | 内部事件/上下文回调 |
+| 21 | `class_721` | `pw.hachimi.client.\u0000qA\u200E` | 1 | `awg\u200E(II)V` | native 核心逻辑（需结合调用图继续命名） |
+| 22 | `class_632` | `pw.hachimi.client.\u0000qU\u200E` | 1 | `avq\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 23 | `class_270` | `pw.hachimi.client.\u0000dq\u200E` | 3 | `nq\u200E(Lpw/hachimi/client/\u0000pj\u200E;)V`<br>`nr\u200E(Lpw/hachimi/client/\u0000eL\u200E;)V`<br>`nt\u200E(Lnet/minecraft/class_1799;)Z` | 物品/背包判断 |
+| 24 | `class_296` | `pw.hachimi.client.\u0000oP\u200E` | 3 | `alK\u200E(Lnet/minecraft/class_2338;IJ)Z`<br>`alL\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V`<br>`alM\u200E(Lpw/hachimi/client/\u0000pj\u200E;)V` | 方块/世界交互 |
+| 25 | `class_769` | `pw.hachimi.client.\u0000oZ\u200E` | 2 | `aot\u200E(CIC)V`<br>`aou\u200E(IIS)V` | native 核心逻辑（需结合调用图继续命名） |
+| 26 | `class_540` | `pw.hachimi.client.\u0000fM\u200E` | 1 | `Aq\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 27 | `class_458` | `pw.hachimi.client.\u0000hT\u200E` | 1 | `Ko\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V` | 内部事件/上下文回调 |
+| 28 | `class_156` | `pw.hachimi.client.\u0000ft\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 29 | `class_335` | `pw.hachimi.client.\u0000dc\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`mj\u200E(Lcom/google/gson/JsonObject;J)Ljava/util/List;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/List Setting 序列化 |
+| 30 | `class_774` | `pw.hachimi.client.\u0000mo\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`abu\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Number;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/Number Setting 序列化 |
+| 31 | `class_370` | `pw.hachimi.client.\u0000oR\u200E` | 4 | `awh\u200E(J)V`<br>`anc\u200E(JLnet/minecraft/class_2664;)Z`<br>`and\u200E(Lnet/minecraft/class_2743;J)Z`<br>`anf\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 32 | `class_309` | `pw.hachimi.client.\u0000bL\u200E` | 1 | `im\u200E(Lnet/minecraft/class_243;J)V` | 向量/移动计算 |
+| 33 | `class_712` | `pw.hachimi.client.\u0000bI\u200E` | 1 | `hM\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 34 | `class_343` | `pw.hachimi.client.\u0000et\u200E` | 1 | `qw\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 35 | `class_807` | `pw.hachimi.client.\u0000lH\u200E` | 5 | `XI\u200E(J)V`<br>`XJ\u200E(IIC[Lpw/hachimi/client/\u0000by\u200E;)V`<br>`XK\u200E(J[Lpw/hachimi/client/\u0000mQ\u200E;)V`<br>`XL\u200E(JLpw/hachimi/client/\u0000by\u200E;)V`<br>`XM\u200E(Lpw/hachimi/client/\u0000by\u200E;J)V` | native 核心逻辑（需结合调用图继续命名） |
+| 36 | `class_392` | `pw.hachimi.client.\u0000rl\u200E` | 4 | `awT\u200E(Lpw/hachimi/client/\u0000pH\u200E;)V`<br>`awU\u200E(Lpw/hachimi/client/\u0000pj\u200E;)V`<br>`awW\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V`<br>`awX\u200E(Lpw/hachimi/client/\u0000pj\u200E;)V` | 内部事件/上下文回调 |
+| 37 | `class_560` | `pw.hachimi.client.\u0000dk\u200E` | 1 | `mM\u200E(Lnet/minecraft/class_437;J)V` | GUI/Screen 回调 |
+| 38 | `—` | `pw.hachimi.client.\u0000gS\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 39 | `class_387` | `pw.hachimi.client.\u0000kM\u200E` | 2 | `Vz\u200E(J)Z`<br>`VA\u200E(Lpw/hachimi/client/\u0000nr\u200E;)V` | native 核心逻辑（需结合调用图继续命名） |
+| 40 | `class_274` | `pw.hachimi.client.\u0000jE\u200E` | 2 | `PY\u200E(Lpw/hachimi/client/\u0000cz\u200E;)V`<br>`PZ\u200E(Lpw/hachimi/client/\u0000pH\u200E;)V` | 内部事件/上下文回调 |
+| 41 | `class_300` | `pw.hachimi.client.\u0000hp\u200E` | 1 | `FI\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 42 | `class_651` | `pw.hachimi.client.\u0000fT\u200E` | 1 | `AH\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 43 | `class_154` | `pw.hachimi.client.\u0000cI\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 44 | `class_348` | `pw.hachimi.client.\u0000qv\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 45 | `class_892` | `pw.hachimi.client.\u0000iZ\u200E` | 2 | `NT\u200E()V`<br>`NU\u200E()V` | native 核心逻辑（需结合调用图继续命名） |
+| 46 | `class_207` | `pw.hachimi.client.\u0000mR\u200E` | 2 | `adG\u200E(J[Lpw/hachimi/client/\u0000mZ\u200E;)V`<br>`adH\u200E(Lpw/hachimi/client/\u0000mZ\u200E;J)V` | 命令系统/命令数组管理 |
+| 47 | `class_695` | `pw.hachimi.client.\u0000au\u200E` | 1 | `dc\u200E(J)V` | native 核心逻辑（需结合调用图继续命名） |
+| 48 | `class_656` | `pw.hachimi.client.\u0000fx\u200E` | 1 | `yA\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 49 | `class_689` | `pw.hachimi.client.\u0000l\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`am\u200E(Lcom/google/gson/JsonObject;J)Ljava/util/List;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/List Setting 序列化 |
+| 50 | `class_151` | `pw.hachimi.client.\u0000kZ\u200E` | 1 | `aoS\u200E(CSI)V` | native 核心逻辑（需结合调用图继续命名） |
+| 51 | `class_341` | `pw.hachimi.client.\u0000qQ\u200E` | 3 | `main([Ljava/lang/String;)V`<br>`avl\u200E(Ljava/lang/String;J)Ljava/lang/String;`<br>`avm\u200E(ILjava/util/List;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V` | Mixin 注入辅助入口 |
+| 52 | `class_421` | `pw.hachimi.client.\u0000av\u200E` | 2 | `dl\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`<br>`dn\u200E(J)V` | 内部事件/上下文回调 |
+| 53 | `class_272` | `pw.hachimi.client.\u0000lf\u200E` | 1 | `WC\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 54 | `class_222` | `pw.hachimi.client.\u0000iz\u200E` | 4 | `LY\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V`<br>`Ma\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`<br>`Mb\u200E(Lpw/hachimi/client/\u0000pH\u200E;)V`<br>`Mf\u200E(Lpw/hachimi/client/\u0000lM\u200E;)V` | 内部事件/上下文回调 |
+| 55 | `class_660` | `pw.hachimi.client.\u0000nu\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`afZ\u200E(JLcom/google/gson/JsonObject;)Ljava/util/List;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/List Setting 序列化 |
+| 56 | `class_802` | `pw.hachimi.client.\u0000qV\u200E` | 1 | `avv\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 57 | `class_454` | `pw.hachimi.client.\u0000hx\u200E` | 2 | `GF\u200E(J)V`<br>`GG\u200E(J)V` | native 核心逻辑（需结合调用图继续命名） |
+| 58 | `class_870` | `pw.hachimi.client.\u0000hR\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`Km\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Boolean;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/Boolean Setting 序列化 |
+| 59 | `class_908` | `pw.hachimi.client.\u0000qt\u200E` | 2 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/配置序列化 |
+| 60 | `class_750` | `pw.hachimi.client.\u0000dt\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`nC\u200E(JLcom/google/gson/JsonObject;)Ljava/lang/String;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/String Setting 序列化 |
+| 61 | `—` | `pw.hachimi.client.\u0000ff\u200E` | 5 | `xq\u200E(BJ)V`<br>`xr\u200E(J)V`<br>`xs\u200E(J)V`<br>`xt\u200E(IBI)V`<br>`xu\u200E(J)Z` | native 核心逻辑（需结合调用图继续命名） |
+| 62 | `class_448` | `pw.hachimi.client.\u0000jp\u200E` | 2 | `Ph\u200E(ZJ)V`<br>`Pj\u200E(BILjava/lang/String;I)V` | native 核心逻辑（需结合调用图继续命名） |
+| 63 | `class_641` | `pw.hachimi.client.\u0000of\u200E` | 1 | `aiN\u200E(Lpw/hachimi/client/\u0000jI\u200E;)V` | 内部事件/上下文回调 |
+| 64 | `class_542` | `pw.hachimi.client.\u0000cm\u200E` | 2 | `ku\u200E(Lpw/hachimi/client/\u0000pH\u200E;)V`<br>`kv\u200E(Lpw/hachimi/client/\u0000pj\u200E;)V` | 内部事件/上下文回调 |
+| 65 | `class_157` | `pw.hachimi.client.\u0000oY\u200E` | 5 | `anY\u200E(J)V`<br>`anZ\u200E(J)V`<br>`aoa\u200E(JS)V`<br>`aob\u200E(J)V`<br>`aoe\u200E(JLjava/lang/String;)V` | native 核心逻辑（需结合调用图继续命名） |
+| 66 | `class_349` | `pw.hachimi.client.\u0000pf\u200E` | 1 | `aoN\u200E(Ljava/lang/String;Ljava/lang/Class;J)Ljava/lang/Object;` | native 核心逻辑（需结合调用图继续命名） |
+| 67 | `class_871` | `pw.hachimi.client.\u0000F\u200E` | 3 | `aU\u200E(JLcom/google/gson/JsonObject;)Lpw/hachimi/client/\u0000nH\u200E;`<br>`LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/配置序列化 |
+| 68 | `class_756` | `pw.hachimi.client.\u0000gT\u200E` | 2 | `Ed\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V`<br>`Ei\u200E(Lpw/hachimi/client/\u0000ps\u200E;)V` | 内部事件/上下文回调 |
+| 69 | `class_708` | `pw.hachimi.client.\u0000kp\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`TK\u200E(JLcom/google/gson/JsonObject;)Ljava/awt/Color;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/Color Setting 序列化 |
+| 70 | `—` | `pw.hachimi.client.\u0000lm\u200E` | 1 | `WQ\u200E(Lpw/hachimi/client/\u0000jx\u200E;)V` | 内部事件/上下文回调 |
+| 71 | `class_768` | `pw.hachimi.client.\u0000dh\u200E` | 3 | `LT\u200E(J)Lcom/google/gson/JsonObject;`<br>`mw\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Enum;`<br>`LU\u200E(Lcom/google/gson/JsonObject;J)Ljava/lang/Object;` | JSON/Enum Setting 序列化 |
+
+### 7.1 可直接提高置信度的 native 证据
+
+- `class_908 / \u0000qt\u200E`、`class_910 / \u0000jl\u200E`、`class_872 / \u0000nH\u200E` 以及 Boolean/Number/String/List/Enum/Color 派生类均出现 Gson `JsonObject` native 方法，进一步确认这一族是 Setting/配置序列化体系。
+- `class_42 / \u0000he\u200E` 的 native 方法直接接受 `BlockPos`、`Direction`、`Entity` 等 Minecraft 类型，明确属于世界交互/实体行为逻辑，而非普通工具类。
+- `class_270 / \u0000dq\u200E` 的 native 方法包含 `ItemStack -> boolean`，可确定至少包含物品条件判断。
+- `class_296 / \u0000oP\u200E` 包含 `BlockPos -> boolean` 与多个内部事件参数，支持其属于方块/位置判定型模块或辅助逻辑。
+- `class_560 / \u0000dk\u200E` 直接接受 Minecraft `Screen`，属于 GUI/界面生命周期相关逻辑。
+- `class_605 / \u0000pG\u200E` 有 `Vec3d + Vec3d -> Vec3d` native 计算，说明存在明确的向量/移动变换逻辑。
+- `class_341 / \u0000qQ\u200E` 的 native 方法包含 `main(String[])` 和 Mixin `CallbackInfo`，应视为特殊入口/注入辅助，而不是普通数据类。
+
+## 8. `skidonion.vLZkx` Native Runtime 索引
+
+| Reg ID | 类 | native 方法数 | 功能形态 | 代表 native 方法 |
+|---:|---|---:|---|---|
+| 72 | `skidonion.vLZkx.l1l` | 17 | 保护/运行时辅助 | `1lI()Lskidonion/vLZkx/l11;`<br>`1ll()Lskidonion/vLZkx/II1;`<br>`l()V`<br>`1I(Z)V`<br>`I1(Ljava/lang/String;)V`<br>`Il(Ljava/lang/String;)V`<br>… 共 17 个 |
+| 73 | `skidonion.vLZkx.lII` | 17 | JSON tree/parser/writer 风格运行时 | `1(I)Lskidonion/vLZkx/11l;`<br>`I(J)Lskidonion/vLZkx/11l;`<br>`l(F)Lskidonion/vLZkx/11l;`<br>`11(D)Lskidonion/vLZkx/11l;`<br>`1I(Ljava/lang/String;)Lskidonion/vLZkx/11l;`<br>`1l(Z)Lskidonion/vLZkx/11l;`<br>… 共 17 个 |
+| 74 | `skidonion.vLZkx.l` | 4 | 保护/运行时辅助 | `hasNext()Z`<br>`1()Lskidonion/vLZkx/11l;`<br>`remove()V`<br>`next()Ljava/lang/Object;` |
+| 75 | `skidonion.vLZkx.l11` | 28 | JSON tree/parser/writer 风格运行时 | `IlIl(Ljava/io/Reader;)Lskidonion/vLZkx/l11;`<br>`Ill1(Ljava/lang/String;)Lskidonion/vLZkx/l11;`<br>`IllI(Lskidonion/vLZkx/l11;)Lskidonion/vLZkx/l11;`<br>`Illl(I)Lskidonion/vLZkx/l11;`<br>`l111(J)Lskidonion/vLZkx/l11;`<br>`l11I(F)Lskidonion/vLZkx/l11;`<br>… 共 28 个 |
+| 76 | `skidonion.vLZkx.lI` | 19 | 保护/运行时辅助 | `1()Lskidonion/vLZkx/Il;`<br>`I()V`<br>`l()V`<br>`11()V`<br>`1I(Z)V`<br>`1l()V`<br>… 共 19 个 |
+| 77 | `skidonion.vLZkx.IIl` | 9 | 保护/运行时辅助 | `l1I(Lskidonion/vLZkx/Il1;)V`<br>`toString()Ljava/lang/String;`<br>`hashCode()I`<br>`1II1()Z`<br>`1I1I()Z`<br>`1I1l()Z`<br>… 共 9 个 |
+| 78 | `skidonion.vLZkx.ll` | 9 | 保护/运行时辅助 | `toString()Ljava/lang/String;`<br>`l1I(Lskidonion/vLZkx/Il1;)V`<br>`l1l()Z`<br>`lI1()I`<br>`lII()J`<br>`lIl()F`<br>… 共 9 个 |
+| 79 | `skidonion.vLZkx.Ill` | 4 | 保护/运行时辅助 | `hasNext()Z`<br>`I()Lskidonion/vLZkx/I11;`<br>`remove()V`<br>`next()Ljava/lang/Object;` |
+| 80 | `skidonion.vLZkx.1I1` | 4 | 保护/运行时辅助 | `1(Ljava/lang/String;I)V`<br>`I(I)V`<br>`l(Ljava/lang/Object;)I`<br>`11(Ljava/lang/Object;)I` |
+| 81 | `skidonion.vLZkx.I11` | 6 | 保护/运行时辅助 | `1()Ljava/lang/String;`<br>`I()Lskidonion/vLZkx/11l;`<br>`hashCode()I`<br>`equals(Ljava/lang/Object;)Z`<br>`l(Lskidonion/vLZkx/I11;)Ljava/lang/String;`<br>`11(Lskidonion/vLZkx/I11;)Lskidonion/vLZkx/11l;` |
+| 82 | `skidonion.vLZkx.II1` | 39 | JSON tree/parser/writer 风格运行时 | `1l1l(Ljava/io/Reader;)Lskidonion/vLZkx/II1;`<br>`1lI1(Ljava/lang/String;)Lskidonion/vLZkx/II1;`<br>`1lII(Lskidonion/vLZkx/II1;)Lskidonion/vLZkx/II1;`<br>`1lIl(Ljava/lang/String;I)Lskidonion/vLZkx/II1;`<br>`1ll1(Ljava/lang/String;J)Lskidonion/vLZkx/II1;`<br>`1llI(Ljava/lang/String;F)Lskidonion/vLZkx/II1;`<br>… 共 39 个 |
+| 83 | `skidonion.vLZkx.1` | 31 | JSON tree/parser/writer 风格运行时 | `1(Ljava/lang/String;)V`<br>`I(Ljava/io/Reader;)V`<br>`l(Ljava/io/Reader;I)V`<br>`11()V`<br>`1I()V`<br>`1l()V`<br>… 共 31 个 |
+| 84 | `skidonion.vLZkx.I1I` | 5 | 保护/运行时辅助 | `l1I(Lskidonion/vLZkx/Il1;)V`<br>`11ll()Z`<br>`1Il1()Ljava/lang/String;`<br>`hashCode()I`<br>`equals(Ljava/lang/Object;)Z` |
+| 85 | `skidonion.vLZkx.11l` | 30 | JSON tree/parser/writer 风格运行时 | `llI(Ljava/io/Reader;)Lskidonion/vLZkx/11l;`<br>`lll(Ljava/lang/String;)Lskidonion/vLZkx/11l;`<br>`1111(I)Lskidonion/vLZkx/11l;`<br>`111I(J)Lskidonion/vLZkx/11l;`<br>`111l(F)Lskidonion/vLZkx/11l;`<br>`11I1(D)Lskidonion/vLZkx/11l;`<br>… 共 30 个 |
+| 86 | `skidonion.vLZkx.Il1` | 13 | 保护/运行时辅助 | `Il(Ljava/lang/String;)V`<br>`l1(Ljava/lang/String;)V`<br>`lI(Ljava/lang/String;)V`<br>`1()V`<br>`I()V`<br>`l()V`<br>… 共 13 个 |
+| 87 | `skidonion.vLZkx.Il` | 3 | 保护/运行时辅助 | `toString()Ljava/lang/String;`<br>`hashCode()I`<br>`equals(Ljava/lang/Object;)Z` |
+| 88 | `skidonion.vLZkx.11` | 4 | 保护/运行时辅助 | `1()Lskidonion/vLZkx/Il;`<br>`I()I`<br>`l()I`<br>`11()I` |
+| 89 | `skidonion.vLZkx.IlI` | 0 | 保护/运行时辅助 | — |
+| 90 | `skidonion.vLZkx.I1l` | 8 | 保护/运行时辅助 | `1()V`<br>`I()V`<br>`l()V`<br>`11()V`<br>`1I()V`<br>`1l()V`<br>… 共 8 个 |
+| 91 | `skidonion.vLZkx.l1I` | 4 | JSON tree/parser/writer 风格运行时 | `I()Lskidonion/vLZkx/l1I;`<br>`l(I)Lskidonion/vLZkx/l1I;`<br>`11()Lskidonion/vLZkx/l1I;`<br>`1(Ljava/io/Writer;)Lskidonion/vLZkx/Il1;` |
+| 92 | `skidonion.vLZkx.I1` | 1 | JSON tree/parser/writer 风格运行时 | `1(Ljava/io/Writer;)Lskidonion/vLZkx/Il1;` |
+| 93 | `skidonion.vLZkx.1ll` | 0 | 保护/运行时辅助 | — |
+| 94 | `skidonion.vLZkx.1II` | 5 | 保护/运行时辅助 | `write(I)V`<br>`write([CII)V`<br>`write(Ljava/lang/String;II)V`<br>`flush()V`<br>`close()V` |
+| 95 | `skidonion.vLZkx.111` | 1 | 保护/运行时辅助 | `1()I` |
+| 96 | `skidonion.vLZkx.1l` | 1 | AWT GUI/输入事件辅助 | `keyPressed(Ljava/awt/event/KeyEvent;)V` |
+| 97 | `skidonion.vLZkx.lIl` | 3 | AWT GUI/输入事件辅助 | `mouseClicked(Ljava/awt/event/MouseEvent;)V`<br>`mouseEntered(Ljava/awt/event/MouseEvent;)V`<br>`mouseExited(Ljava/awt/event/MouseEvent;)V` |
+| 98 | `skidonion.vLZkx.I` | 3 | AWT GUI/输入事件辅助 | `mouseClicked(Ljava/awt/event/MouseEvent;)V`<br>`mouseEntered(Ljava/awt/event/MouseEvent;)V`<br>`mouseExited(Ljava/awt/event/MouseEvent;)V` |
+| 99 | `skidonion.vLZkx.III` | 3 | AWT GUI/输入事件辅助 | `mouseClicked(Ljava/awt/event/MouseEvent;)V`<br>`mouseEntered(Ljava/awt/event/MouseEvent;)V`<br>`mouseExited(Ljava/awt/event/MouseEvent;)V` |
+| 100 | `skidonion.vLZkx.l1` | 27 | AWT GUI/输入事件辅助 | `1I()V`<br>`1l()I`<br>`I1(Ljava/awt/event/ActionEvent;)V`<br>`II()V`<br>`Il(Ljava/awt/event/MouseEvent;)V`<br>`l1(Ljava/awt/event/MouseEvent;)V`<br>… 共 27 个 |
+| 101 | `skidonion.vLZkx.1I` | 0 | 保护/运行时辅助 | — |
+| 102 | `skidonion.vLZkx.11I` | 0 | 保护/运行时辅助 | — |
+| 103 | `skidonion.vLZkx.lI1` | 1 | 保护/运行时辅助 | `1()Lskidonion/vLZkx/l11;` |
+| 104 | `skidonion.vLZkx.1lI` | 2 | 线程/任务辅助 | `1(Ljava/lang/Runnable;)Ljava/lang/Thread;`<br>`I()V` |
+| 105 | `skidonion.vLZkx.1l1` | 1 | 保护/运行时辅助 | `1(Ljava/lang/String;)Ljava/lang/String;` |
+| 106 | `skidonion.vLZkx.1Il` | 9 | 保护/运行时辅助 | `1(II)I`<br>`I([BI)I`<br>`l(I[BI)V`<br>`11([IIIII)V`<br>`1I()V`<br>`1l([B)[B`<br>… 共 9 个 |
+| 107 | `skidonion.vLZkx.II` | 6 | 字节/字符串编码变换 | `1([B)Ljava/lang/String;`<br>`I(Ljava/lang/String;)[B`<br>`l([B)[B`<br>`11([B)Ljava/lang/String;`<br>`1I(Ljava/lang/String;)[B`<br>`1l([B)[B` |
+| — | `skidonion.vLZkx.___` | 1 | 统一 native registrar | `___(ILjava/lang/Class;)V` |
+
+### 8.1 Registrar 关系
+
+- Registrar：`skidonion.vLZkx.___.___(ILjava/lang/Class;)V`。native mapping 将 Registration ID `0..107` 分配给已注册类，registrar 自身没有 Registration ID。
+- 几乎所有已注册类的 `registrationCaller` 都是 `<clinit>()V`，说明绑定发生在类初始化阶段。
+- 因为本地实现可能承载业务判断、序列化、事件处理或算法，仅靠 Java decompiler 看到“空 native 声明”时，不应据此判断该类“没有功能”。
+
+
+## 9. 分析边界
+
+1. 本报告是 **静态** 分析，不运行 Minecraft 客户端，也不执行 native 模块；`native_mapping.json` 只作为已导出的注册关系与方法签名证据。
+2. `native_mapping.json` 能确认哪些方法被本地化，但不能直接恢复 native 函数体；业务模块显示名/描述仍被动态字符串解密保护；在没有完整运行时 class-load 顺序、native 状态和游戏依赖的情况下，不能把每一个 `Module` 子类可靠还原成原作者命名。
+3. 因此 README 对每个 class 给出的是“可证明的结构职责”；只有有直接明文、继承关系、接口、record component 或明确 API 调用时，才给出更具体的业务含义。
+4. `class_N` 是 mapping 工作区的安全别名，不是原程序源码类名。原始内部名才是 `pw.hachimi.client.\u0000xx\u200E` 这一类值。
+
+## 10. 建议后续逆向顺序
+
+若要继续把“模块实现”精确恢复成具体功能名，优先顺序建议为：先用 `native_mapping.json` 的 Registration ID 将 Java class 与 native 实现建立稳定索引；再处理 `re` 模块基类构造器的字符串参数与 `invokedynamic` bootstrap；随后处理 146 个模块子类的 `super(...)` 调用，并把 `jx/jI/pH/pj` 等高频 native 回调参数沿调用图命名；再根据 Mixin -> Event -> Module 链条恢复事件语义；最后才处理授权/角色检查与更深层 native 函数体。这样比逐个反编译 928 个 class 更高效，也能避免被控制流垃圾和 Java 空 native 壳误导。
+
